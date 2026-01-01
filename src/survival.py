@@ -9,6 +9,7 @@ Each model implements:
 
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List, Tuple, Any
+import warnings
 
 import numpy as np
 from scipy import stats
@@ -130,7 +131,19 @@ class DeltaMass(SurvivalModel):
     Useful for scheduled events (e.g., checkups at 30, 60, 90 days).
     """
 
+    def __new__(cls, t0: float = 0.0):
+        if np.isinf(t0):
+            warnings.warn(
+                "DeltaMass(inf) is deprecated; use NeverOccurs() instead",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            return NeverOccurs()
+        return super().__new__(cls)
+
     def __init__(self, t0: float = 0.0):
+        if np.isinf(t0):
+            return  # Already handled by __new__, skip init
         self.t0 = t0
 
     def sample(self, state=None, subject=None) -> float:
@@ -244,9 +257,10 @@ class Mixture(SurvivalModel):
     Mixture of survival distributions.
 
     S(t) = sum_i w_i * S_i(t)
+    h(t) = [sum_i w_i * f_i(t)] / S(t)   (NOT the weighted average of hazards!)
 
     Use cases:
-    - Cure fraction: Mixture([DeltaMass(inf), Weibull(...)], [p_cure, 1-p_cure])
+    - Cure fraction: Mixture([NeverOccurs(), Weibull(...)], [p_cure, 1-p_cure])
     - Multimodal: different subpopulations with different survival
     """
 
@@ -264,6 +278,25 @@ class Mixture(SurvivalModel):
 
     def survival(self, t: float) -> float:
         return sum(w * m.survival(t) for w, m in zip(self.weights, self.models))
+
+    def hazard(self, t: float) -> float:
+        """
+        Mixture hazard: h(t) = f(t) / S(t) = [sum_i w_i h_i(t) S_i(t)] / S(t)
+
+        Note: This is NOT the weighted average of component hazards.
+        For a cure model, the hazard decreases over time as the uncured
+        population is depleted and only cured (immortal) individuals remain.
+        """
+        s_t = self.survival(t)
+        if s_t < 1e-10:
+            return float('inf')
+
+        # f(t) = sum_i w_i * f_i(t) = sum_i w_i * h_i(t) * S_i(t)
+        f_t = sum(
+            w * m.hazard(t) * m.survival(t)
+            for w, m in zip(self.weights, self.models)
+        )
+        return f_t / s_t
 
 
 class NeverOccurs(SurvivalModel):
