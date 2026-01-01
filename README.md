@@ -37,6 +37,7 @@ df = simulate_cohort_simple(n_subjects=100, events=events, max_time=365)
 
 ## Documentation
 
+- [Simulation Framework](docs/simulation_framework.md) - How events, triggers, and state fit together
 - [Survival Models](docs/survival_models.md) - Available distributions and composite models
 - [Neural Integration](docs/neural_integration.md) - Patterns for state-dependent neural survival models
 - [Example notebook](notebooks/journey_simulation_examples.ipynb) - Detailed usage examples
