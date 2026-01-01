@@ -37,4 +37,6 @@ df = simulate_cohort_simple(n_subjects=100, events=events, max_time=365)
 
 ## Documentation
 
-See `notebooks/journey_simulation_examples.ipynb` for detailed examples.
+- [Survival Models](docs/survival_models.md) - Available distributions and composite models
+- [Neural Integration](docs/neural_integration.md) - Patterns for state-dependent neural survival models
+- [Example notebook](notebooks/journey_simulation_examples.ipynb) - Detailed usage examples
