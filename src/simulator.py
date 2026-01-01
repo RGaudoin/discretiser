@@ -313,3 +313,112 @@ def simulate_cohort_simple(
     results = simulator.simulate_cohort(subjects)
 
     return simulator.cohort_to_dataframe(results)
+
+
+# -----------------------------------------------------------------------------
+# Training data extraction
+# -----------------------------------------------------------------------------
+
+def extract_training_data(
+    df: pd.DataFrame,
+    event_names: List[str],
+    target_event: str,
+    include_censored: bool = True
+) -> pd.DataFrame:
+    """
+    Extract training data from simulation output.
+
+    For each subject, computes features at each event and the time to
+    the target event (or censoring). Suitable for supervised learning
+    of survival models.
+
+    Args:
+        df: DataFrame from simulate_cohort_simple or cohort_to_dataframe
+            Must have columns: subject_id, event, time
+        event_names: Events to use for feature extraction (counts, time-since)
+        target_event: The event we're trying to predict time-to
+        include_censored: Whether to include censored observations
+
+    Returns:
+        DataFrame with columns:
+        - subject_id
+        - observation_time: Time at which features are observed
+        - {event}_count: Count of each event up to observation_time
+        - {event}_time_since: Time since last occurrence (NaN if never)
+        - time_to_target: Time from observation to target event
+        - censored: Whether observation is censored (target not observed)
+
+    Example:
+        df = simulate_cohort_simple(n_subjects=1000, events=events, max_time=365)
+        training_df = extract_training_data(df, ['diagnosis', 'treatment'], 'outcome')
+    """
+    records = []
+
+    for subject_id, subject_df in df.groupby('subject_id'):
+        subject_df = subject_df.sort_values('time')
+
+        # Find target event time (if any)
+        target_rows = subject_df[subject_df['event'] == target_event]
+        if len(target_rows) > 0:
+            target_time = target_rows['time'].iloc[0]
+            is_censored = False
+        else:
+            # Subject didn't experience target event - use max observed time
+            target_time = subject_df['time'].max()
+            is_censored = True
+
+        if is_censored and not include_censored:
+            continue
+
+        # Build features at each observation point (each event)
+        event_counts = {name: 0 for name in event_names}
+        last_event_times = {name: np.nan for name in event_names}
+
+        for _, row in subject_df.iterrows():
+            obs_time = row['time']
+            event = row['event']
+
+            # Skip if this is the target event or after it
+            if event == target_event or obs_time >= target_time:
+                break
+
+            # Update counts for observed event
+            if event in event_names:
+                event_counts[event] += 1
+                last_event_times[event] = obs_time
+
+            # Create feature record at this observation point
+            record = {
+                'subject_id': subject_id,
+                'observation_time': obs_time,
+                'time_to_target': target_time - obs_time,
+                'censored': is_censored,
+            }
+
+            # Add event counts
+            for name in event_names:
+                record[f'{name}_count'] = event_counts[name]
+
+            # Add time-since features
+            for name in event_names:
+                if np.isnan(last_event_times[name]):
+                    record[f'{name}_time_since'] = np.nan
+                else:
+                    record[f'{name}_time_since'] = obs_time - last_event_times[name]
+
+            records.append(record)
+
+        # Also create a baseline record at t=0 if subject has events before target
+        if len(subject_df[subject_df['time'] < target_time]) > 0:
+            baseline = {
+                'subject_id': subject_id,
+                'observation_time': 0.0,
+                'time_to_target': target_time,
+                'censored': is_censored,
+            }
+            for name in event_names:
+                baseline[f'{name}_count'] = 0
+                baseline[f'{name}_time_since'] = np.nan
+            records.insert(0, baseline)  # Add at beginning
+
+    return pd.DataFrame(records)

@@ -386,3 +386,109 @@ class StateDependentWeibull(Weibull):
             scale = self.scale_modifier(scale, state, subject)
 
         return scale * np.random.weibull(shape)
+
+
+# -----------------------------------------------------------------------------
+# Trained Model Integration
+# -----------------------------------------------------------------------------
+
+class TrainedModelSurvival(SurvivalModel):
+    """
+    Wrapper for externally trained survival models.
+
+    Connects any predictor with a predict(features) -> params interface
+    to the simulation framework. The predictor can be:
+    - A pickled sklearn/keras model
+    - An ONNX runtime session
+    - Any object with predict(features) -> array of parameters
+
+    Example:
+        predictor = joblib.load('trained_model.pkl')
+        survival = TrainedModelSurvival(predictor, ['diagnosis', 'treatment'])
+        events = [EventType('outcome', survival, terminal=True)]
+    """
+
+    SUPPORTED_DISTRIBUTIONS = {'weibull', 'exponential', 'lognormal'}
+
+    def __init__(
+        self,
+        predictor,
+        event_names: List[str],
+        distribution: str = 'weibull'
+    ):
+        """
+        Args:
+            predictor: Object with predict(features) -> params method
+            event_names: Event names for feature extraction via State.to_feature_vector()
+            distribution: One of 'weibull', 'exponential', 'lognormal'
+        """
+        if distribution not in self.SUPPORTED_DISTRIBUTIONS:
+            raise ValueError(
+                f"distribution must be one of {self.SUPPORTED_DISTRIBUTIONS}, "
+                f"got '{distribution}'"
+            )
+        self.predictor = predictor
+        self.event_names = event_names
+        self.distribution = distribution
+        self._last_params = None  # Cache for survival/hazard calculations
+
+    def sample(self, state=None, subject=None) -> float:
+        """Sample time-to-event using predicted parameters."""
+        if state is None:
+            raise ValueError("TrainedModelSurvival requires state for prediction")
+
+        features = state.to_feature_vector(self.event_names)
+        params = self.predictor.predict(features[np.newaxis, :])[0]
+        self._last_params = params
+
+        if self.distribution == 'weibull':
+            shape, scale = params[0], params[1]
+            return scale * np.random.weibull(shape)
+
+        elif self.distribution == 'exponential':
+            rate = params[0]
+            return np.random.exponential(1.0 / rate)
+
+        elif self.distribution == 'lognormal':
+            mu, sigma = params[0], params[1]
+            return np.random.lognormal(mu, sigma)
+
+    def survival(self, t: float) -> float:
+        """
+        Survival function using last predicted parameters.
+
+        Note: This uses cached parameters from the last sample() call.
+        For accurate survival curves, re-predict for the specific state.
+        """
+        if self._last_params is None:
+            raise RuntimeError(
+                "No parameters available. Call sample() first or use "
+                "predict_survival() with explicit state."
+            )
+
+        if self.distribution == 'weibull':
+            shape, scale = self._last_params[0], self._last_params[1]
+            if t < 0:
+                return 1.0
+            return np.exp(-((t / scale) ** shape))
+
+        elif self.distribution == 'exponential':
+            rate = self._last_params[0]
+            if t < 0:
+                return 1.0
+            return np.exp(-rate * t)
+
+        elif self.distribution == 'lognormal':
+            mu, sigma = self._last_params[0], self._last_params[1]
+            if t <= 0:
+                return 1.0
+            return 1.0 - stats.lognorm(s=sigma, scale=np.exp(mu)).cdf(t)
+
+    def predict_params(self, state) -> np.ndarray:
+        """
+        Get predicted parameters for a given state without sampling.
+
+        Useful for inspecting what the model predicts.
+        """
+        features = state.to_feature_vector(self.event_names)
+        return self.predictor.predict(features[np.newaxis, :])[0]
