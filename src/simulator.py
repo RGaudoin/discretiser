@@ -154,6 +154,10 @@ class Simulator:
             state.advance_time(winner_time)
             state.record_event(winner_name, winner_time, triggered_by=winner_triggered_by)
 
+            # Process cancellations - remove specified events from pending
+            for cancelled_event in winner_event.cancels:
+                state.pop_pending_event(cancelled_event)
+
             # Handle termination
             if winner_event.terminal:
                 state.mark_terminated(is_censoring=winner_event.is_censoring)
@@ -182,12 +186,17 @@ class Simulator:
 
         - Simultaneous events (dt=0) are recorded immediately
         - Future events (dt>0) are added to pending and compete with other events
+        - Trigger-level cancellations are processed when the trigger fires
         """
         triggered = source_event.get_triggered_events(state, subject)
 
-        for target_name, dt in triggered:
+        for target_name, dt, trigger_cancels in triggered:
             if target_name not in self.registry:
                 continue
+
+            # Process trigger-level cancellations
+            for cancelled_event in trigger_cancels:
+                state.pop_pending_event(cancelled_event)
 
             target_time = state.time + dt
 

@@ -221,6 +221,44 @@ TriggerRule(
 )
 ```
 
+### Cancelling Pending Events
+
+When an event occurs, it can cancel (remove) other events from the pending list. Both `EventType` and `TriggerRule` support cancellations.
+
+**EventType.cancels** - unconditional, fires whenever the event occurs:
+
+```python
+# New diagnosis always cancels scheduled routine checkups
+EventType(
+    name='new_diagnosis',
+    survival_model=Weibull(1.5, 60),
+    cancels=['routine_checkup', 'annual_screening']
+)
+```
+
+**TriggerRule.cancels** - conditional, only fires when the trigger fires:
+
+```python
+# Treatment only cancels disease_progression if it triggers remission
+EventType(
+    name='treatment',
+    survival_model=Weibull(1.2, 14),
+    triggers=[
+        TriggerRule(
+            target_event='remission',
+            survival_model=PointMassPlusContinuous(0.3, Weibull(2, 30)),
+            cancels=['disease_progression', 'symptom_flare']
+        )
+    ]
+)
+```
+
+**Processing order:**
+1. Event occurs → EventType.cancels processed
+2. Triggers checked → TriggerRule.cancels processed for each firing trigger
+
+**Note**: Terminal events automatically clear all pending events.
+
 ## Event Types by Role
 
 ### Regular Events
