@@ -52,23 +52,40 @@ class Simulator:
 
     Simulates event sequences for subjects according to registered
     event types and their survival models.
+
+    Modes:
+        'competing': (default) Pending events persist until they win or are cancelled.
+                     Events that don't win continue to compete in future rounds.
+
+        'autoregressive': Pending events get one chance to compete. After each event,
+                          all pending is cleared. Triggers add fresh pending for the
+                          next round only. More natural for sequence models that
+                          predict "next event | history".
     """
+
+    VALID_MODES = {'competing', 'autoregressive'}
 
     def __init__(
         self,
         event_registry: EventRegistry,
         max_time: float = float('inf'),
-        max_events: int = 1000
+        max_events: int = 1000,
+        mode: str = 'competing'
     ):
         """
         Args:
             event_registry: Registry of event types
             max_time: Maximum simulation time
             max_events: Maximum events per subject (safety limit)
+            mode: 'competing' (default) or 'autoregressive'
         """
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"mode must be one of {self.VALID_MODES}, got '{mode}'")
+
         self.registry = event_registry
         self.max_time = max_time
         self.max_events = max_events
+        self.mode = mode
 
         # Validate registry
         errors = self.registry.validate()
@@ -124,8 +141,8 @@ class Simulator:
 
             # Include pending triggered events in competition
             for event_name, (scheduled_time, source) in state.get_pending_events().items():
-                # Pending event competes if its time is still in the future
-                if scheduled_time > state.time:
+                # Pending event competes if its time is at or after current time
+                if scheduled_time >= state.time:
                     # Only include if no sampled time or pending is earlier
                     if event_name not in times or scheduled_time < times[event_name]:
                         times[event_name] = scheduled_time
@@ -153,6 +170,17 @@ class Simulator:
             # Advance time and record event
             state.advance_time(winner_time)
             state.record_event(winner_name, winner_time, triggered_by=winner_triggered_by)
+
+            # Clean up any stale pending events (scheduled before current time)
+            state.pop_stale_pending()
+
+            # Process cancellations - remove specified events from pending
+            for cancelled_event in winner_event.cancels:
+                state.pop_pending_event(cancelled_event)
+
+            # Clear all pending if event requests it or in autoregressive mode
+            if winner_event.clears_all_pending or self.mode == 'autoregressive':
+                state.clear_pending_events()
 
             # Handle termination
             if winner_event.terminal:
@@ -182,12 +210,17 @@ class Simulator:
 
         - Simultaneous events (dt=0) are recorded immediately
         - Future events (dt>0) are added to pending and compete with other events
+        - Trigger-level cancellations are processed when the trigger fires
         """
         triggered = source_event.get_triggered_events(state, subject)
 
-        for target_name, dt in triggered:
+        for target_name, dt, trigger_cancels in triggered:
             if target_name not in self.registry:
                 continue
+
+            # Process trigger-level cancellations
+            for cancelled_event in trigger_cancels:
+                state.pop_pending_event(cancelled_event)
 
             target_time = state.time + dt
 
@@ -313,3 +346,112 @@ def simulate_cohort_simple(
     results = simulator.simulate_cohort(subjects)
 
     return simulator.cohort_to_dataframe(results)
+
+
+# -----------------------------------------------------------------------------
+# Training data extraction
+# -----------------------------------------------------------------------------
+
+def extract_training_data(
+    df: pd.DataFrame,
+    event_names: List[str],
+    target_event: str,
+    include_censored: bool = True
+) -> pd.DataFrame:
+    """
+    Extract training data from simulation output.
+
+    For each subject, computes features at each event and the time to
+    the target event (or censoring). Suitable for supervised learning
+    of survival models.
+
+    Args:
+        df: DataFrame from simulate_cohort_simple or cohort_to_dataframe
+            Must have columns: subject_id, event, time
+        event_names: Events to use for feature extraction (counts, time-since)
+        target_event: The event we're trying to predict time-to
+        include_censored: Whether to include censored observations
+
+    Returns:
+        DataFrame with columns:
+        - subject_id
+        - observation_time: Time at which features are observed
+        - {event}_count: Count of each event up to observation_time
+        - {event}_time_since: Time since last occurrence (NaN if never)
+        - time_to_target: Time from observation to target event
+        - censored: Whether observation is censored (target not observed)
+
+    Example:
+        df = simulate_cohort_simple(n_subjects=1000, events=events, max_time=365)
+        training_df = extract_training_data(df, ['diagnosis', 'treatment'], 'outcome')
+    """
+    records = []
+
+    for subject_id, subject_df in df.groupby('subject_id'):
+        subject_df = subject_df.sort_values('time')
+
+        # Find target event time (if any)
+        target_rows = subject_df[subject_df['event'] == target_event]
+        if len(target_rows) > 0:
+            target_time = target_rows['time'].iloc[0]
+            is_censored = False
+        else:
+            # Subject didn't experience target event - use max observed time
+            target_time = subject_df['time'].max()
+            is_censored = True
+
+        if is_censored and not include_censored:
+            continue
+
+        # Build features at each observation point (each event)
+        event_counts = {name: 0 for name in event_names}
+        last_event_times = {name: np.nan for name in event_names}
+
+        for _, row in subject_df.iterrows():
+            obs_time = row['time']
+            event = row['event']
+
+            # Skip if this is the target event or after it
+            if event == target_event or obs_time >= target_time:
+                break
+
+            # Update counts for observed event
+            if event in event_names:
+                event_counts[event] += 1
+                last_event_times[event] = obs_time
+
+            # Create feature record at this observation point
+            record = {
+                'subject_id': subject_id,
+                'observation_time': obs_time,
+                'time_to_target': target_time - obs_time,
+                'censored': is_censored,
+            }
+
+            # Add event counts
+            for name in event_names:
+                record[f'{name}_count'] = event_counts[name]
+
+            # Add time-since features
+            for name in event_names:
+                if np.isnan(last_event_times[name]):
+                    record[f'{name}_time_since'] = np.nan
+                else:
+                    record[f'{name}_time_since'] = obs_time - last_event_times[name]
+
+            records.append(record)
+
+        # Also create a baseline record at t=0 if subject has events before target
+        if len(subject_df[subject_df['time'] < target_time]) > 0:
+            baseline = {
+                'subject_id': subject_id,
+                'observation_time': 0.0,
+                'time_to_target': target_time,
+                'censored': is_censored,
+            }
+            for name in event_names:
+                baseline[f'{name}_count'] = 0
+                baseline[f'{name}_time_since'] = np.nan
+            records.insert(0, baseline)  # Add at beginning
+
+    return pd.DataFrame(records)

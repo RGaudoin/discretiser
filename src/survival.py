@@ -8,11 +8,12 @@ Each model implements:
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Optional, Dict, List, Tuple, Any, TYPE_CHECKING
 import warnings
 
 import numpy as np
 from scipy import stats
+from scipy.optimize import brentq
 
 
 class SurvivalModel(ABC):
@@ -40,6 +41,178 @@ class SurvivalModel(ABC):
             return float('inf')
         s_t_eps = self.survival(t + eps)
         return -(s_t_eps - s_t) / (eps * s_t)
+
+    def inverse_survival(self, u: float, sampling_method: str = 'auto') -> float:
+        """
+        Inverse survival function: find t such that S(t) = u.
+
+        Args:
+            u: Target survival probability in (0, 1]
+            sampling_method: One of:
+                - 'auto': use analytic if available, else numerical (default)
+                - 'analytic': use closed-form (error if not available)
+                - 'numerical': always use root-finding
+
+        Returns:
+            Time t where S(t) = u
+
+        Default implementation uses numerical root-finding.
+        Subclasses should override with closed-form solutions where available.
+        """
+        if sampling_method not in ('auto', 'analytic', 'numerical'):
+            raise ValueError(
+                f"sampling_method must be 'auto', 'analytic', or 'numerical', "
+                f"got '{sampling_method}'"
+            )
+
+        if sampling_method == 'analytic':
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not have an analytic inverse_survival. "
+                f"Use sampling_method='auto' or 'numerical'."
+            )
+
+        return self._inverse_survival_numerical(u)
+
+    def _inverse_survival_numerical(self, u: float) -> float:
+        """Numerical inverse using root-finding. For internal use."""
+        if u <= 0:
+            return float('inf')
+        if u >= 1:
+            return 0.0
+
+        t_upper = 1.0
+        while self.survival(t_upper) > u and t_upper < 1e10:
+            t_upper *= 2
+        if t_upper >= 1e10:
+            return float('inf')
+
+        return brentq(lambda t: self.survival(t) - u, 0, t_upper)
+
+    def truncate(
+        self,
+        elapsed_time: float,
+        sampling_method: str = 'auto'
+    ) -> 'SurvivalModel':
+        """
+        Return a truncated version conditioned on T > elapsed_time.
+
+        The truncated model represents the remaining time distribution
+        given survival up to elapsed_time.
+
+        Args:
+            elapsed_time: Time already elapsed (t₀)
+            sampling_method: Method for inverse_survival ('auto', 'analytic', 'numerical')
+
+        Returns:
+            New SurvivalModel where:
+            - S'(t) = S(t + t₀) / S(t₀)
+            - h'(t) = h(t + t₀)
+            - sample() draws from conditional distribution
+        """
+        if elapsed_time <= 0:
+            return self
+        return TruncatedSurvival(self, elapsed_time, sampling_method)
+
+
+# -----------------------------------------------------------------------------
+# Truncated Survival Wrapper
+# -----------------------------------------------------------------------------
+
+class TruncatedSurvival(SurvivalModel):
+    """
+    Truncated survival model conditioned on T > elapsed_time.
+
+    Represents the remaining time distribution given survival up to elapsed_time.
+    For a base distribution with survival S(t) and hazard h(t), the truncated
+    version has:
+    - S'(t) = S(t + t₀) / S(t₀)
+    - h'(t) = h(t + t₀)  (hazard just shifts)
+
+    Sampling uses inverse transform with scaled uniform.
+    """
+
+    def __init__(
+        self,
+        base: SurvivalModel,
+        elapsed_time: float,
+        sampling_method: str = 'auto'
+    ):
+        """
+        Args:
+            base: The original survival model
+            elapsed_time: Time already elapsed (t₀), must be > 0
+            sampling_method: Method for inverse_survival ('auto', 'analytic', 'numerical')
+        """
+        if elapsed_time <= 0:
+            raise ValueError(f"elapsed_time must be positive, got {elapsed_time}")
+        if sampling_method not in ('auto', 'analytic', 'numerical'):
+            raise ValueError(
+                f"sampling_method must be 'auto', 'analytic', or 'numerical', "
+                f"got '{sampling_method}'"
+            )
+        self.base = base
+        self.elapsed = elapsed_time
+        self.sampling_method = sampling_method
+        self._s_elapsed = base.survival(elapsed_time)
+
+        if self._s_elapsed <= 0:
+            raise ValueError(
+                f"Cannot truncate at elapsed_time={elapsed_time}: "
+                f"S({elapsed_time}) = 0, event would have occurred"
+            )
+
+    def sample(self, state=None, subject=None) -> float:
+        """
+        Sample from truncated distribution using inverse transform.
+
+        Scale uniform to (0, S(t₀)] then use base inverse.
+        """
+        u = np.random.uniform(0, 1)
+        u_scaled = u * self._s_elapsed
+        t_absolute = self.base.inverse_survival(u_scaled, self.sampling_method)
+        return t_absolute - self.elapsed
+
+    def survival(self, t: float) -> float:
+        """S'(t) = S(t + t₀) / S(t₀)"""
+        if t < 0:
+            return 1.0
+        return self.base.survival(t + self.elapsed) / self._s_elapsed
+
+    def hazard(self, t: float) -> float:
+        """h'(t) = h(t + t₀) - hazard just shifts"""
+        return self.base.hazard(t + self.elapsed)
+
+    def inverse_survival(self, u: float, sampling_method: str = None) -> float:
+        """
+        Inverse of truncated survival.
+
+        S'(t) = u means S(t + t₀) / S(t₀) = u
+        So S(t + t₀) = u * S(t₀), and t = base.inverse(u * S(t₀)) - t₀
+
+        Args:
+            u: Target survival probability
+            sampling_method: Override instance method if provided
+        """
+        method = sampling_method if sampling_method is not None else self.sampling_method
+
+        if u <= 0:
+            return float('inf')
+        if u >= 1:
+            return 0.0
+        u_scaled = u * self._s_elapsed
+        return self.base.inverse_survival(u_scaled, method) - self.elapsed
+
+    def truncate(
+        self,
+        elapsed_time: float,
+        sampling_method: str = None
+    ) -> 'SurvivalModel':
+        """Truncating a truncated model: just add the elapsed times."""
+        if elapsed_time <= 0:
+            return self
+        # Use provided method or inherit from self
+        method = sampling_method if sampling_method is not None else self.sampling_method
+        return TruncatedSurvival(self.base, self.elapsed + elapsed_time, method)
 
 
 # -----------------------------------------------------------------------------
@@ -70,6 +243,17 @@ class Weibull(SurvivalModel):
         if t <= 0:
             return 0.0 if self.shape > 1 else float('inf') if self.shape < 1 else 1.0 / self.scale
         return (self.shape / self.scale) * ((t / self.scale) ** (self.shape - 1))
+
+    def inverse_survival(self, u: float, sampling_method: str = 'auto') -> float:
+        """Closed-form inverse: t = λ * (-ln(u))^(1/k)"""
+        if sampling_method == 'numerical':
+            return self._inverse_survival_numerical(u)
+
+        if u <= 0:
+            return float('inf')
+        if u >= 1:
+            return 0.0
+        return self.scale * ((-np.log(u)) ** (1.0 / self.shape))
 
 
 class Exponential(Weibull):
@@ -102,6 +286,17 @@ class LogNormal(SurvivalModel):
             return 1.0
         return 1.0 - self._dist.cdf(t)
 
+    def inverse_survival(self, u: float, sampling_method: str = 'auto') -> float:
+        """Use scipy's ppf: S(t) = u means F(t) = 1 - u"""
+        if sampling_method == 'numerical':
+            return self._inverse_survival_numerical(u)
+
+        if u <= 0:
+            return float('inf')
+        if u >= 1:
+            return 0.0
+        return self._dist.ppf(1.0 - u)
+
 
 class Gamma(SurvivalModel):
     """Gamma distribution."""
@@ -118,6 +313,17 @@ class Gamma(SurvivalModel):
         if t <= 0:
             return 1.0
         return 1.0 - self._dist.cdf(t)
+
+    def inverse_survival(self, u: float, sampling_method: str = 'auto') -> float:
+        """Use scipy's ppf: S(t) = u means F(t) = 1 - u"""
+        if sampling_method == 'numerical':
+            return self._inverse_survival_numerical(u)
+
+        if u <= 0:
+            return float('inf')
+        if u >= 1:
+            return 0.0
+        return self._dist.ppf(1.0 - u)
 
 
 # -----------------------------------------------------------------------------
@@ -298,6 +504,43 @@ class Mixture(SurvivalModel):
         )
         return f_t / s_t
 
+    def truncate(
+        self,
+        elapsed_time: float,
+        sampling_method: str = 'auto'
+    ) -> 'SurvivalModel':
+        """
+        Truncated mixture: mixture with updated weights and truncated components.
+
+        New weights: w'_i = w_i * S_i(t₀) / S(t₀)
+
+        The component with higher survival at t₀ gets more weight, reflecting
+        that if you've survived this long, you're more likely from the
+        longer-lived component.
+        """
+        if elapsed_time <= 0:
+            return self
+
+        s_total = self.survival(elapsed_time)
+        if s_total <= 0:
+            raise ValueError(
+                f"Cannot truncate mixture at elapsed_time={elapsed_time}: "
+                f"S({elapsed_time}) = 0"
+            )
+
+        # Compute updated weights: w'_i = w_i * S_i(t₀) / S(t₀)
+        new_weights = [
+            w * m.survival(elapsed_time) / s_total
+            for w, m in zip(self.weights, self.models)
+        ]
+
+        # Truncate each component with same sampling method
+        truncated_models = [
+            m.truncate(elapsed_time, sampling_method) for m in self.models
+        ]
+
+        return Mixture(truncated_models, new_weights)
+
 
 class NeverOccurs(SurvivalModel):
     """Event that never occurs. Useful for cure fractions or disabled events."""
@@ -307,6 +550,19 @@ class NeverOccurs(SurvivalModel):
 
     def survival(self, t: float) -> float:
         return 1.0
+
+    def inverse_survival(self, u: float, sampling_method: str = 'auto') -> float:
+        """S(t) = 1 for all t, so inverse is 0 for u=1, inf otherwise."""
+        # No difference between methods for NeverOccurs
+        return 0.0 if u >= 1 else float('inf')
+
+    def truncate(
+        self,
+        elapsed_time: float,
+        sampling_method: str = 'auto'
+    ) -> 'SurvivalModel':
+        """Truncating NeverOccurs still never occurs."""
+        return self
 
 
 class CompoundWeibull(SurvivalModel):
@@ -323,7 +579,7 @@ class CompoundWeibull(SurvivalModel):
 
     The combined hazard starts high, decreases, then increases again.
 
-    Parameters: shape1, scale1, shape2, scale2 (4 total)
+    This is a convenience wrapper around MinSurvival([Weibull, Weibull]).
     """
 
     def __init__(
@@ -339,17 +595,69 @@ class CompoundWeibull(SurvivalModel):
         self.scale2 = scale2
         self.weibull1 = Weibull(shape1, scale1)
         self.weibull2 = Weibull(shape2, scale2)
+        self._min_survival = MinSurvival([self.weibull1, self.weibull2])
 
     def sample(self, state=None, subject=None) -> float:
-        t1 = self.weibull1.sample(state, subject)
-        t2 = self.weibull2.sample(state, subject)
-        return min(t1, t2)
+        return self._min_survival.sample(state, subject)
 
     def survival(self, t: float) -> float:
-        return self.weibull1.survival(t) * self.weibull2.survival(t)
+        return self._min_survival.survival(t)
 
     def hazard(self, t: float) -> float:
-        return self.weibull1.hazard(t) + self.weibull2.hazard(t)
+        return self._min_survival.hazard(t)
+
+    def truncate(
+        self,
+        elapsed_time: float,
+        sampling_method: str = 'auto'
+    ) -> 'SurvivalModel':
+        return self._min_survival.truncate(elapsed_time, sampling_method)
+
+
+class MinSurvival(SurvivalModel):
+    """
+    Minimum of multiple survival distributions (additive hazards).
+
+    S(t) = prod_i S_i(t)
+    h(t) = sum_i h_i(t)
+    sample: min(sample_i for all i)
+
+    This is the competing risks model where the first event to occur wins.
+    More general than CompoundWeibull (works with any survival models).
+    """
+
+    def __init__(self, models: List[SurvivalModel]):
+        if not models:
+            raise ValueError("MinSurvival requires at least one model")
+        self.models = models
+
+    def sample(self, state=None, subject=None) -> float:
+        return min(m.sample(state, subject) for m in self.models)
+
+    def survival(self, t: float) -> float:
+        result = 1.0
+        for m in self.models:
+            result *= m.survival(t)
+        return result
+
+    def hazard(self, t: float) -> float:
+        return sum(m.hazard(t) for m in self.models)
+
+    def truncate(
+        self,
+        elapsed_time: float,
+        sampling_method: str = 'auto'
+    ) -> 'SurvivalModel':
+        """
+        Truncated min: min of truncated components.
+
+        S(t + t₀) / S(t₀) = prod_i [S_i(t + t₀) / S_i(t₀)]
+        """
+        if elapsed_time <= 0:
+            return self
+        return MinSurvival([
+            m.truncate(elapsed_time, sampling_method) for m in self.models
+        ])
 
 
 # -----------------------------------------------------------------------------
@@ -386,3 +694,109 @@ class StateDependentWeibull(Weibull):
             scale = self.scale_modifier(scale, state, subject)
 
         return scale * np.random.weibull(shape)
+
+
+# -----------------------------------------------------------------------------
+# Trained Model Integration
+# -----------------------------------------------------------------------------
+
+class TrainedModelSurvival(SurvivalModel):
+    """
+    Wrapper for externally trained survival models.
+
+    Connects any predictor with a predict(features) -> params interface
+    to the simulation framework. The predictor can be:
+    - A pickled sklearn/keras model
+    - An ONNX runtime session
+    - Any object with predict(features) -> array of parameters
+
+    Example:
+        predictor = joblib.load('trained_model.pkl')
+        survival = TrainedModelSurvival(predictor, ['diagnosis', 'treatment'])
+        events = [EventType('outcome', survival, terminal=True)]
+    """
+
+    SUPPORTED_DISTRIBUTIONS = {'weibull', 'exponential', 'lognormal'}
+
+    def __init__(
+        self,
+        predictor,
+        event_names: List[str],
+        distribution: str = 'weibull'
+    ):
+        """
+        Args:
+            predictor: Object with predict(features) -> params method
+            event_names: Event names for feature extraction via State.to_feature_vector()
+            distribution: One of 'weibull', 'exponential', 'lognormal'
+        """
+        if distribution not in self.SUPPORTED_DISTRIBUTIONS:
+            raise ValueError(
+                f"distribution must be one of {self.SUPPORTED_DISTRIBUTIONS}, "
+                f"got '{distribution}'"
+            )
+        self.predictor = predictor
+        self.event_names = event_names
+        self.distribution = distribution
+        self._last_params = None  # Cache for survival/hazard calculations
+
+    def sample(self, state=None, subject=None) -> float:
+        """Sample time-to-event using predicted parameters."""
+        if state is None:
+            raise ValueError("TrainedModelSurvival requires state for prediction")
+
+        features = state.to_feature_vector(self.event_names)
+        params = self.predictor.predict(features[np.newaxis, :])[0]
+        self._last_params = params
+
+        if self.distribution == 'weibull':
+            shape, scale = params[0], params[1]
+            return scale * np.random.weibull(shape)
+
+        elif self.distribution == 'exponential':
+            rate = params[0]
+            return np.random.exponential(1.0 / rate)
+
+        elif self.distribution == 'lognormal':
+            mu, sigma = params[0], params[1]
+            return np.random.lognormal(mu, sigma)
+
+    def survival(self, t: float) -> float:
+        """
+        Survival function using last predicted parameters.
+
+        Note: This uses cached parameters from the last sample() call.
+        For accurate survival curves, re-predict for the specific state.
+        """
+        if self._last_params is None:
+            raise RuntimeError(
+                "No parameters available. Call sample() first or use "
+                "predict_survival() with explicit state."
+            )
+
+        if self.distribution == 'weibull':
+            shape, scale = self._last_params[0], self._last_params[1]
+            if t < 0:
+                return 1.0
+            return np.exp(-((t / scale) ** shape))
+
+        elif self.distribution == 'exponential':
+            rate = self._last_params[0]
+            if t < 0:
+                return 1.0
+            return np.exp(-rate * t)
+
+        elif self.distribution == 'lognormal':
+            mu, sigma = self._last_params[0], self._last_params[1]
+            if t <= 0:
+                return 1.0
+            return 1.0 - stats.lognorm(s=sigma, scale=np.exp(mu)).cdf(t)
+
+    def predict_params(self, state) -> np.ndarray:
+        """
+        Get predicted parameters for a given state without sampling.
+
+        Useful for inspecting what the model predicts.
+        """
+        features = state.to_feature_vector(self.event_names)
+        return self.predictor.predict(features[np.newaxis, :])[0]

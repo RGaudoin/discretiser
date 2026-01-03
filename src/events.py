@@ -21,13 +21,17 @@ class TriggerRule:
     When the source event occurs, the target event may be triggered
     according to the specified survival model (which may include
     a point mass at t=0 for simultaneous events).
-    """
-    target_event: str  # name of event to trigger
-    survival_model: SurvivalModel  # how the triggered event's time is determined
 
-    # Optional condition: only trigger if this returns True
-    # Signature: condition(state, subject) -> bool
+    Attributes:
+        target_event: Name of the event to trigger
+        survival_model: How the triggered event's time is determined
+        condition: Optional callable(state, subject) -> bool
+        cancels: List of event names to remove from pending when this trigger fires
+    """
+    target_event: str
+    survival_model: SurvivalModel
     condition: Optional[Callable[[Any, Any], bool]] = None
+    cancels: List[str] = field(default_factory=list)
 
     def should_trigger(self, state: Any, subject: Any) -> bool:
         """Check if this trigger rule should fire."""
@@ -45,6 +49,9 @@ class EventType:
         name: Unique identifier for this event type
         survival_model: Base survival model for time-to-event
         triggers: List of events this event can trigger when it occurs
+        cancels: List of event names to remove from pending when this occurs
+        clears_all_pending: If True, clear all pending events when this occurs
+                            (before processing triggers, so new triggers still apply)
         terminal: If True, this event ends the simulation (e.g., death)
         is_censoring: If True, this is a censoring event (observation ends)
         active_condition: Optional callable(state, subject) -> bool
@@ -54,6 +61,8 @@ class EventType:
     name: str
     survival_model: SurvivalModel
     triggers: List[TriggerRule] = field(default_factory=list)
+    cancels: List[str] = field(default_factory=list)
+    clears_all_pending: bool = False
     terminal: bool = False
     is_censoring: bool = False
     active_condition: Optional[Callable[[Any, Any], bool]] = None
@@ -76,14 +85,15 @@ class EventType:
         Get list of events triggered by this event occurring.
 
         Returns:
-            List of (event_name, time_delta) tuples.
+            List of (event_name, time_delta, cancels) tuples.
             time_delta = 0 means simultaneous occurrence.
+            cancels is a list of event names to remove from pending.
         """
         triggered = []
         for rule in self.triggers:
             if rule.should_trigger(state, subject):
                 dt = rule.survival_model.sample(state, subject)
-                triggered.append((rule.target_event, dt))
+                triggered.append((rule.target_event, dt, rule.cancels))
         return triggered
 
 

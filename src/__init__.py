@@ -14,7 +14,10 @@ from .survival import (
     Mixture,
     NeverOccurs,
     CompoundWeibull,
+    MinSurvival,
+    TruncatedSurvival,
     StateDependentWeibull,
+    TrainedModelSurvival,
 )
 
 from .events import (
@@ -40,6 +43,7 @@ from .simulator import (
     Simulator,
     simulate_journey,
     simulate_cohort_simple,
+    extract_training_data,
 )
 
 __all__ = [
@@ -55,7 +59,10 @@ __all__ = [
     "Mixture",
     "NeverOccurs",
     "CompoundWeibull",
+    "MinSurvival",
+    "TruncatedSurvival",
     "StateDependentWeibull",
+    "TrainedModelSurvival",
     # Events
     "TriggerRule",
     "EventType",
@@ -75,4 +82,5 @@ __all__ = [
     "Simulator",
     "simulate_journey",
     "simulate_cohort_simple",
+    "extract_training_data",
 ]
