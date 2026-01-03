@@ -175,9 +175,8 @@ class Simulator:
             for cancelled_event in winner_event.cancels:
                 state.pop_pending_event(cancelled_event)
 
-            # Autoregressive mode: clear all remaining pending events
-            # (they get one chance to compete, then are discarded)
-            if self.mode == 'autoregressive':
+            # Clear all pending if event requests it or in autoregressive mode
+            if winner_event.clears_all_pending or self.mode == 'autoregressive':
                 state.clear_pending_events()
 
             # Handle termination

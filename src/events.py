@@ -50,6 +50,8 @@ class EventType:
         survival_model: Base survival model for time-to-event
         triggers: List of events this event can trigger when it occurs
         cancels: List of event names to remove from pending when this occurs
+        clears_all_pending: If True, clear all pending events when this occurs
+                            (before processing triggers, so new triggers still apply)
         terminal: If True, this event ends the simulation (e.g., death)
         is_censoring: If True, this is a censoring event (observation ends)
         active_condition: Optional callable(state, subject) -> bool
@@ -60,6 +62,7 @@ class EventType:
     survival_model: SurvivalModel
     triggers: List[TriggerRule] = field(default_factory=list)
     cancels: List[str] = field(default_factory=list)
+    clears_all_pending: bool = False
     terminal: bool = False
     is_censoring: bool = False
     active_condition: Optional[Callable[[Any, Any], bool]] = None

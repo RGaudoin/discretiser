@@ -152,8 +152,33 @@ class State:
         self._pending_events[event_name] = (scheduled_time, triggered_by)
 
     def get_pending_events(self) -> Dict[str, tuple]:
-        """Get all pending triggered events."""
+        """Get all pending triggered events as {name: (absolute_time, triggered_by)}."""
         return self._pending_events.copy()
+
+    def get_pending_summary(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get pending events with time remaining until scheduled occurrence.
+
+        Returns:
+            Dict of event_name -> {
+                'scheduled_time': absolute scheduled time,
+                'time_remaining': time until event (from current time),
+                'triggered_by': source event that scheduled this
+            }
+
+        Useful for:
+        - Inspecting what's in flight
+        - Re-triggering cleared events with adjusted timing
+        - Feature extraction for models
+        """
+        summary = {}
+        for name, (scheduled_time, triggered_by) in self._pending_events.items():
+            summary[name] = {
+                'scheduled_time': scheduled_time,
+                'time_remaining': scheduled_time - self.time,
+                'triggered_by': triggered_by
+            }
+        return summary
 
     def pop_pending_event(self, event_name: str) -> Optional[tuple]:
         """Remove and return a pending event (time, triggered_by)."""
@@ -175,6 +200,7 @@ class State:
         - time: current simulation time
         - event_counts: dict of event name -> count
         - time_since_last: dict of event name -> time since last (or None)
+        - pending_events: dict of pending event summaries (for re-triggering)
         - subject_features: subject's feature dict
         """
         return {
@@ -184,6 +210,7 @@ class State:
                 name: self.time_since_last(name)
                 for name in self._occurred_events
             },
+            "pending_events": self.get_pending_summary(),
             "subject_features": self.subject.features,
             "n_events": len(self.history),
         }

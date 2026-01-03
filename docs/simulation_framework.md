@@ -259,6 +259,36 @@ EventType(
 
 **Note**: Terminal events automatically clear all pending events.
 
+### Clear All Pending
+
+For autoregressive-style behaviour on specific events (without using global autoregressive mode):
+
+```python
+# When new_diagnosis occurs, clear all pending and start fresh
+EventType(
+    name='new_diagnosis',
+    survival_model=Weibull(1.5, 60),
+    clears_all_pending=True,  # Clears before triggers run
+    triggers=[...]  # New triggers still apply after clearing
+)
+```
+
+### Inspecting Pending Events
+
+To see what's pending (for re-triggering or feature extraction):
+
+```python
+# Get summary with time remaining
+pending = state.get_pending_summary()
+# {'checkup': {'scheduled_time': 50.0, 'time_remaining': 20.0, 'triggered_by': 'diagnosis'}}
+
+# Also included in feature dict
+features = state.to_feature_dict()
+# features['pending_events'] contains the same info
+```
+
+**Note on re-triggering**: The pending summary provides `time_remaining` which can be used to re-trigger cleared events. However, for complete equivalence with competing mode, one would need to implement truncated survival models that sample from the conditional distribution `S(t | t > elapsed)`, where `elapsed` is the time since the original trigger. The elapsed time can be computed by looking up when `triggered_by` occurred in the event history.
+
 ## Event Types by Role
 
 ### Regular Events
