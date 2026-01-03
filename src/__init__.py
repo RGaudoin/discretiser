@@ -14,6 +14,8 @@ from .survival import (
     Mixture,
     NeverOccurs,
     CompoundWeibull,
+    MinSurvival,
+    TruncatedSurvival,
     StateDependentWeibull,
     TrainedModelSurvival,
 )
@@ -57,6 +59,8 @@ __all__ = [
     "Mixture",
     "NeverOccurs",
     "CompoundWeibull",
+    "MinSurvival",
+    "TruncatedSurvival",
     "StateDependentWeibull",
     "TrainedModelSurvival",
     # Events
