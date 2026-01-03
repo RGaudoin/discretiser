@@ -159,6 +159,9 @@ class State:
         """
         Get pending events with time remaining until scheduled occurrence.
 
+        Only includes events with non-negative time_remaining (due now or
+        in the future). Stale events (time_remaining < 0) are excluded.
+
         Returns:
             Dict of event_name -> {
                 'scheduled_time': absolute scheduled time,
@@ -173,16 +176,44 @@ class State:
         """
         summary = {}
         for name, (scheduled_time, triggered_by) in self._pending_events.items():
-            summary[name] = {
-                'scheduled_time': scheduled_time,
-                'time_remaining': scheduled_time - self.time,
-                'triggered_by': triggered_by
-            }
+            time_remaining = scheduled_time - self.time
+            if time_remaining >= 0:
+                summary[name] = {
+                    'scheduled_time': scheduled_time,
+                    'time_remaining': time_remaining,
+                    'triggered_by': triggered_by
+                }
         return summary
 
     def pop_pending_event(self, event_name: str) -> Optional[tuple]:
         """Remove and return a pending event (time, triggered_by)."""
         return self._pending_events.pop(event_name, None)
+
+    def get_stale_pending(self) -> Dict[str, tuple]:
+        """
+        Get pending events that are past their scheduled time (stale).
+
+        Returns:
+            Dict of event_name -> (scheduled_time, triggered_by) for events
+            where scheduled_time < current time.
+        """
+        return {
+            name: (scheduled_time, triggered_by)
+            for name, (scheduled_time, triggered_by) in self._pending_events.items()
+            if scheduled_time < self.time
+        }
+
+    def pop_stale_pending(self) -> Dict[str, tuple]:
+        """
+        Remove and return all stale pending events.
+
+        Returns:
+            Dict of event_name -> (scheduled_time, triggered_by) that were removed.
+        """
+        stale = self.get_stale_pending()
+        for name in stale:
+            del self._pending_events[name]
+        return stale
 
     def clear_pending_events(self) -> None:
         """Clear all pending events (e.g., after terminal event)."""

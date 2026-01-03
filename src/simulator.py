@@ -141,8 +141,8 @@ class Simulator:
 
             # Include pending triggered events in competition
             for event_name, (scheduled_time, source) in state.get_pending_events().items():
-                # Pending event competes if its time is still in the future
-                if scheduled_time > state.time:
+                # Pending event competes if its time is at or after current time
+                if scheduled_time >= state.time:
                     # Only include if no sampled time or pending is earlier
                     if event_name not in times or scheduled_time < times[event_name]:
                         times[event_name] = scheduled_time
@@ -170,6 +170,9 @@ class Simulator:
             # Advance time and record event
             state.advance_time(winner_time)
             state.record_event(winner_name, winner_time, triggered_by=winner_triggered_by)
+
+            # Clean up any stale pending events (scheduled before current time)
+            state.pop_stale_pending()
 
             # Process cancellations - remove specified events from pending
             for cancelled_event in winner_event.cancels:
