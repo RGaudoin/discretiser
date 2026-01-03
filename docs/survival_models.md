@@ -127,3 +127,81 @@ model = StateDependentWeibull(
     scale_modifier=scale_by_treatment_count
 )
 ```
+
+## Truncated Distributions
+
+For autoregressive modelling, events may need to be re-triggered after being cleared. The `truncate()` method creates a conditional distribution given survival up to a certain time.
+
+### Interface
+
+```python
+# Base method available on all SurvivalModel classes
+truncated = model.truncate(elapsed_time)
+
+# With explicit sampling method
+truncated = model.truncate(elapsed_time, sampling_method='numerical')
+```
+
+The `sampling_method` parameter controls how `inverse_survival()` is computed:
+- `'auto'` (default): use analytic if available, else numerical
+- `'analytic'`: use closed-form (error if not available)
+- `'numerical'`: always use root-finding (Brent's method)
+
+Returns a new `SurvivalModel` where:
+- `S'(t) = S(t + t₀) / S(t₀)` - conditional survival
+- `h'(t) = h(t + t₀)` - hazard just shifts
+- `sample()` draws from the conditional distribution
+
+### Closed-Form Implementations
+
+| Model | Truncation |
+|-------|------------|
+| `Weibull` | Closed-form inverse via `λ * ((t₀/λ)^k - ln(U))^(1/k) - t₀` |
+| `Exponential` | Memoryless - truncated exponential is just exponential |
+| `LogNormal`, `Gamma` | Via scipy's quantile function |
+| `NeverOccurs` | Returns itself (still never occurs) |
+| `Mixture` | Mixture with updated weights + truncated components |
+| `MinSurvival`, `CompoundWeibull` | Min of truncated components |
+
+### Mixture Truncation
+
+For mixtures, the component weights are updated based on conditional survival:
+
+```
+w'_i = w_i * S_i(t₀) / S(t₀)
+```
+
+The component with higher survival at t₀ gets more weight - if you've survived this long, you're more likely from the longer-lived component.
+
+### Example: Re-triggering Cleared Events
+
+```python
+# In autoregressive mode, events are cleared after each occurrence
+# To re-trigger with correct conditional distribution:
+
+pending = state.get_pending_summary()
+for event_name, info in pending.items():
+    elapsed = current_time - triggered_time  # time since original trigger
+    original_model = event_registry[event_name].survival_model
+    truncated_model = original_model.truncate(elapsed)
+    new_dt = truncated_model.sample()
+    # new_dt is sampled from S(t | T > elapsed)
+```
+
+### MinSurvival Class
+
+A general competing risks model (more flexible than `CompoundWeibull`):
+
+```python
+# Minimum of any survival distributions (additive hazards)
+min_model = MinSurvival([
+    Weibull(0.5, 10),   # Early hazard
+    Weibull(2.0, 100),  # Late hazard
+    Exponential(0.01)   # Constant background hazard
+])
+```
+
+Properties:
+- `S(t) = prod_i S_i(t)`
+- `h(t) = sum_i h_i(t)`
+- `sample() = min(sample_i for all i)`
