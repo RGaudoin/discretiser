@@ -221,6 +221,74 @@ TriggerRule(
 )
 ```
 
+### Cancelling Pending Events
+
+When an event occurs, it can cancel (remove) other events from the pending list. Both `EventType` and `TriggerRule` support cancellations.
+
+**EventType.cancels** - unconditional, fires whenever the event occurs:
+
+```python
+# New diagnosis always cancels scheduled routine checkups
+EventType(
+    name='new_diagnosis',
+    survival_model=Weibull(1.5, 60),
+    cancels=['routine_checkup', 'annual_screening']
+)
+```
+
+**TriggerRule.cancels** - conditional, only fires when the trigger fires:
+
+```python
+# Treatment only cancels disease_progression if it triggers remission
+EventType(
+    name='treatment',
+    survival_model=Weibull(1.2, 14),
+    triggers=[
+        TriggerRule(
+            target_event='remission',
+            survival_model=PointMassPlusContinuous(0.3, Weibull(2, 30)),
+            cancels=['disease_progression', 'symptom_flare']
+        )
+    ]
+)
+```
+
+**Processing order:**
+1. Event occurs → EventType.cancels processed
+2. Triggers checked → TriggerRule.cancels processed for each firing trigger
+
+**Note**: Terminal events automatically clear all pending events.
+
+### Clear All Pending
+
+For autoregressive-style behaviour on specific events (without using global autoregressive mode):
+
+```python
+# When new_diagnosis occurs, clear all pending and start fresh
+EventType(
+    name='new_diagnosis',
+    survival_model=Weibull(1.5, 60),
+    clears_all_pending=True,  # Clears before triggers run
+    triggers=[...]  # New triggers still apply after clearing
+)
+```
+
+### Inspecting Pending Events
+
+To see what's pending (for re-triggering or feature extraction):
+
+```python
+# Get summary with time remaining
+pending = state.get_pending_summary()
+# {'checkup': {'scheduled_time': 50.0, 'time_remaining': 20.0, 'triggered_by': 'diagnosis'}}
+
+# Also included in feature dict
+features = state.to_feature_dict()
+# features['pending_events'] contains the same info
+```
+
+**Note on re-triggering**: The pending summary provides `time_remaining` which can be used to re-trigger cleared events. However, for complete equivalence with competing mode, one would need to implement truncated survival models that sample from the conditional distribution `S(t | t > elapsed)`, where `elapsed` is the time since the original trigger. The elapsed time can be computed by looking up when `triggered_by` occurred in the event history.
+
 ## Event Types by Role
 
 ### Regular Events
@@ -320,6 +388,42 @@ for event in result.history:
     print(f"t={event.time:.1f}: {event.event_name} (triggered by: {event.triggered_by})")
 ```
 
+## Simulation Modes
+
+The simulator supports two modes for handling pending events:
+
+### Competing Mode (default)
+
+Pending events persist until they win or are explicitly cancelled. Events that don't win continue competing in future rounds.
+
+```python
+simulator = Simulator(registry, max_time=730, mode='competing')
+```
+
+**Behaviour:**
+- Triggered event scheduled at t=50
+- Another event wins at t=30
+- Triggered event still pending, competes again next round
+
+### Autoregressive Mode
+
+Pending events get one chance to compete. After each event, all remaining pending events are cleared. Triggers add fresh pending for the next round only.
+
+```python
+simulator = Simulator(registry, max_time=730, mode='autoregressive')
+```
+
+**Behaviour:**
+- Triggered event scheduled at t=50
+- Another event wins at t=30
+- Triggered event is cleared (didn't win this round)
+- Only newly triggered events compete next round
+
+**Use cases:**
+- Sequence models that predict "next event | history"
+- Transformer/RNN architectures
+- Simpler state representation (no persistent pending to track)
+
 ## State-Dependent Survival
 
 Survival models receive `(state, subject)` and can adapt their behaviour:
@@ -334,4 +438,4 @@ class TreatmentDependentOutcome(Weibull):
         return adjusted_scale * np.random.weibull(self.shape)
 ```
 
-See [neural_integration.md](neural_integration.md) for using neural networks to predict survival parameters.
+See [trained_model_integration.md](trained_model_integration.md) for using neural networks to predict survival parameters.

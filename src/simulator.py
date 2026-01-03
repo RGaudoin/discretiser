@@ -52,23 +52,40 @@ class Simulator:
 
     Simulates event sequences for subjects according to registered
     event types and their survival models.
+
+    Modes:
+        'competing': (default) Pending events persist until they win or are cancelled.
+                     Events that don't win continue to compete in future rounds.
+
+        'autoregressive': Pending events get one chance to compete. After each event,
+                          all pending is cleared. Triggers add fresh pending for the
+                          next round only. More natural for sequence models that
+                          predict "next event | history".
     """
+
+    VALID_MODES = {'competing', 'autoregressive'}
 
     def __init__(
         self,
         event_registry: EventRegistry,
         max_time: float = float('inf'),
-        max_events: int = 1000
+        max_events: int = 1000,
+        mode: str = 'competing'
     ):
         """
         Args:
             event_registry: Registry of event types
             max_time: Maximum simulation time
             max_events: Maximum events per subject (safety limit)
+            mode: 'competing' (default) or 'autoregressive'
         """
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"mode must be one of {self.VALID_MODES}, got '{mode}'")
+
         self.registry = event_registry
         self.max_time = max_time
         self.max_events = max_events
+        self.mode = mode
 
         # Validate registry
         errors = self.registry.validate()
@@ -154,6 +171,14 @@ class Simulator:
             state.advance_time(winner_time)
             state.record_event(winner_name, winner_time, triggered_by=winner_triggered_by)
 
+            # Process cancellations - remove specified events from pending
+            for cancelled_event in winner_event.cancels:
+                state.pop_pending_event(cancelled_event)
+
+            # Clear all pending if event requests it or in autoregressive mode
+            if winner_event.clears_all_pending or self.mode == 'autoregressive':
+                state.clear_pending_events()
+
             # Handle termination
             if winner_event.terminal:
                 state.mark_terminated(is_censoring=winner_event.is_censoring)
@@ -182,12 +207,17 @@ class Simulator:
 
         - Simultaneous events (dt=0) are recorded immediately
         - Future events (dt>0) are added to pending and compete with other events
+        - Trigger-level cancellations are processed when the trigger fires
         """
         triggered = source_event.get_triggered_events(state, subject)
 
-        for target_name, dt in triggered:
+        for target_name, dt, trigger_cancels in triggered:
             if target_name not in self.registry:
                 continue
+
+            # Process trigger-level cancellations
+            for cancelled_event in trigger_cancels:
+                state.pop_pending_event(cancelled_event)
 
             target_time = state.time + dt
 
