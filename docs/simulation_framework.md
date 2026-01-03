@@ -358,6 +358,42 @@ for event in result.history:
     print(f"t={event.time:.1f}: {event.event_name} (triggered by: {event.triggered_by})")
 ```
 
+## Simulation Modes
+
+The simulator supports two modes for handling pending events:
+
+### Competing Mode (default)
+
+Pending events persist until they win or are explicitly cancelled. Events that don't win continue competing in future rounds.
+
+```python
+simulator = Simulator(registry, max_time=730, mode='competing')
+```
+
+**Behaviour:**
+- Triggered event scheduled at t=50
+- Another event wins at t=30
+- Triggered event still pending, competes again next round
+
+### Autoregressive Mode
+
+Pending events get one chance to compete. After each event, all remaining pending events are cleared. Triggers add fresh pending for the next round only.
+
+```python
+simulator = Simulator(registry, max_time=730, mode='autoregressive')
+```
+
+**Behaviour:**
+- Triggered event scheduled at t=50
+- Another event wins at t=30
+- Triggered event is cleared (didn't win this round)
+- Only newly triggered events compete next round
+
+**Use cases:**
+- Sequence models that predict "next event | history"
+- Transformer/RNN architectures
+- Simpler state representation (no persistent pending to track)
+
 ## State-Dependent Survival
 
 Survival models receive `(state, subject)` and can adapt their behaviour:
@@ -372,4 +408,4 @@ class TreatmentDependentOutcome(Weibull):
         return adjusted_scale * np.random.weibull(self.shape)
 ```
 
-See [neural_integration.md](neural_integration.md) for using neural networks to predict survival parameters.
+See [trained_model_integration.md](trained_model_integration.md) for using neural networks to predict survival parameters.
