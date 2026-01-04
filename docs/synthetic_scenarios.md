@@ -96,13 +96,50 @@ def failure_hazard_modifier(state, subject):
 
 `failure` incurs high cost C_fail = 1000 and terminates the journey.
 
+### Optional: Monitor Event
+
+An additional `monitor` event adds an observation/decision layer:
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `monitor` | Action | Inspect widget state, small cost |
+
+**Mechanistic triggering:**
+- `monitor` observes current degradation count
+- If degradation ≥ threshold_high → trigger `full_service`
+- If degradation ≥ threshold_low → trigger `quick_fix`
+- Otherwise → no action
+
+This creates a more realistic flow: inspect → decide → act
+
+**Optimisation levels:**
+1. **Parameter optimisation** (simple baseline): tune monitor interval and thresholds
+2. **RL on monitor timing**: when to inspect (state-dependent)
+3. **RL on full action space**: when to inspect AND what action to take after
+
 ### Baseline Heuristic Policy
 
 The ground truth simulator can run with a simple heuristic:
 
 ```python
-# Heuristic: quick_fix every 30 days, full_service every 90 days
+# Heuristic: monitor every 15 days, act based on degradation count
 def baseline_policy(state):
+    t_monitor = state.time_since('monitor') or state.time
+
+    if t_monitor >= 15:
+        return 'monitor'  # Triggers maintenance mechanistically
+    else:
+        return None  # No action
+
+# Monitor triggers (defined in event setup):
+# - degradation_count >= 3 → full_service
+# - degradation_count >= 1 → quick_fix
+```
+
+Alternative without monitor:
+```python
+# Direct heuristic: quick_fix every 30 days, full_service every 90 days
+def baseline_policy_direct(state):
     t_quick = state.time_since('quick_fix') or state.time
     t_full = state.time_since('full_service') or state.time
 
@@ -118,6 +155,7 @@ This provides:
 - A sensible baseline for comparison
 - Training data with "reasonable" maintenance patterns
 - A benchmark for RL to beat
+- Parameter optimisation as intermediate step before full RL
 
 ### What RL Should Discover
 
