@@ -135,6 +135,27 @@ An optimal policy should learn:
 | Two maintenance types differ | Embeddings should separate quick_fix from full_service histories |
 | Optimal maintenance timing | RL policy on learned model should match RL on ground truth |
 
+### Embedding Validation
+
+A trained generative model may produce embeddings at different levels:
+
+**Subject-level embeddings:**
+- Represent inherent widget characteristics (from subject features)
+- Should correlate with ground-truth durability factors
+- Validate via: clustering should separate high/low durability subjects, regression should predict failure rates
+
+**Journey-level embeddings:**
+- Represent accumulated state (maintenance history, degradation count, etc.)
+- Should encode "risk state" at any point in time
+- Validate via: classification of "needs maintenance soon" vs "healthy", regression to predict time-to-failure
+
+**Downstream tasks for validation:**
+- Clustering: Do embeddings group subjects/journeys with similar ground-truth characteristics?
+- Classification: Can embeddings predict categorical outcomes (will fail within X days)?
+- Regression: Can embeddings predict continuous outcomes (expected time to failure, total cost)?
+
+This provides an additional validation axis beyond policy performance - even if RL policies match, embeddings should also recover meaningful structure.
+
 ---
 
 ## Implementation Sketch
