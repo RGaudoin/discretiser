@@ -53,7 +53,32 @@ Minimal version to validate the pipeline end-to-end before adding complexity.
 | Maintenance | Single `service` action | One action type to start |
 | Failure model | Bathtub with subject-dependent scale | Gives heterogeneity for RL |
 | Baseline | Linear: `interval = a + b·durability` | Adds data diversity |
-| State | `(time, time_since_service, features)` | Minimal state space |
+| State | `(time, time_since_service, service_count, features)` | Includes service history for effective age |
+
+### Why This Is True RL (Not Just a Bandit)
+
+Without careful design, each service cycle is independent → contextual bandit, not RL. To create sequential dependence, need state that doesn't fully reset.
+
+**Options for sequential structure:**
+1. **Cumulative wear**: Service doesn't fully restore; permanent degradation accumulates
+2. **Service effectiveness degrades**: Repeated services become less effective over time
+3. **Budget/resource constraints**: Limited services available across lifetime
+4. **Bathtub + effective age model** (chosen for POC): Service reduces effective age but can't stop time
+
+**POC choice: Effective age model**
+```
+effective_age = total_age - cumulative_service_benefit
+service adds delta_t to cumulative_service_benefit (capped)
+failure_hazard = bathtub(effective_age)
+```
+- Service "rejuvenates" widget by delta_t
+- But total_age keeps advancing → bathtub phases still matter
+- Optimal strategy changes with age: less service early, more late
+- **State that carries across cycles**: cumulative_service_benefit (or equivalently, service_count)
+
+**Technically a POMDP** (effective_age is internal), but mitigated by:
+- Derived features: service_count, total_time → can compute effective_age
+- RNN/transformer architectures can learn the hidden state from event history
 
 ### POC Open Issues
 
@@ -67,9 +92,11 @@ Minimal version to validate the pipeline end-to-end before adding complexity.
 - For POC: full state (time, time_since_service, subject features)
 
 **Reward/cost structure:**
-- Service cost: C_service
-- Failure cost: C_failure
-- For POC: simple immediate costs, no discounting initially
+- Service cost: C_service (immediate cost)
+- Failure cost: C_failure (terminal cost)
+- **Revenue: R per time unit while operational** (critical - otherwise "fail fast" is optimal)
+- For POC: simple structure, e.g., R=1/day, C_service=50, C_failure=500
+- Trade-off: service extends revenue-generating life but costs money
 
 ### POC Validation
 
