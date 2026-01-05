@@ -340,6 +340,9 @@ The bathtub model is attractive because:
 - Subject heterogeneity is natural (manufacturing variation)
 - Already have `CompoundWeibull` implemented
 
+**Note on subject heterogeneity:**
+No need for discrete widget "types" - the subject feature vector already provides continuous heterogeneity. Each subject is a point in feature space; ground-truth dynamics are parameterised by features. Different failure/degradation profiles emerge naturally from the feature distribution.
+
 ---
 
 ## Next Steps
