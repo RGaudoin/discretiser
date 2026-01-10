@@ -36,12 +36,11 @@ failure_hazard = bathtub(effective_age)
 - Optimal strategy changes with age: less service early, more late
 - **State that carries across cycles**: cumulative_service_benefit (or equivalently, service_count)
 
-**Observability note:** If `effective_age = total_age - service_count * delta_t`, it's deterministic and fully computable from state → standard MDP.
+**This is an MDP:** The effective_age is fully computable from state (`total_age - service_count * delta_t`). Subject heterogeneity comes from features (observed). Uncertainty comes from:
+- Stochastic failure times (bathtub survival model)
+- Optionally stochastic service effects (`delta_t ~ Distribution`)
 
-**Options for adding uncertainty:**
-1. **Stochastic service effect** (MDP with noisy transitions): `delta_t ~ Normal(mean, var)` - service benefit varies, but cumulative effect is tracked
-2. **Hidden quality** (true POMDP): subject has unobserved quality factor affecting effective_age
-3. **Keep deterministic** for simplicity in first scenario
+No hidden state → standard MDP, not POMDP.
 
 ## Open Issues
 
