@@ -40,15 +40,95 @@ Ground Truth Simulator
 
 ---
 
-## Scenario: Widget Maintenance
+## Simple POC (Proof of Concept)
 
-A neutral domain (avoiding medical/clinical complexity) that captures the core dynamics of interest.
+Minimal version to validate the pipeline end-to-end before adding complexity.
+
+### POC Specification
+
+| Component | Choice | Rationale |
+|-----------|--------|-----------|
+| Degradation | None (implicit via time) | Simplest option |
+| Monitor event | None | Not needed without explicit degradation |
+| Maintenance | Single `service` action | One action type to start |
+| Failure model | Bathtub with subject-dependent scale | Gives heterogeneity for RL |
+| Baseline | Linear: `interval = a + b·durability` | Adds data diversity |
+| State | `(time, time_since_service, service_count, features)` | Includes service history for effective age |
+
+### Why This Is True RL (Not Just a Bandit)
+
+Without careful design, each service cycle is independent → contextual bandit, not RL. To create sequential dependence, need state that doesn't fully reset.
+
+**Options for sequential structure:**
+1. **Cumulative wear**: Service doesn't fully restore; permanent degradation accumulates
+2. **Service effectiveness degrades**: Repeated services become less effective over time
+3. **Budget/resource constraints**: Limited services available across lifetime
+4. **Bathtub + effective age model** (chosen for POC): Service reduces effective age but can't stop time
+
+**POC choice: Effective age model**
+```
+effective_age = total_age - cumulative_service_benefit
+service adds delta_t to cumulative_service_benefit (capped)
+failure_hazard = bathtub(effective_age)
+```
+- Service "rejuvenates" widget by delta_t
+- But total_age keeps advancing → bathtub phases still matter
+- Optimal strategy changes with age: less service early, more late
+- **State that carries across cycles**: cumulative_service_benefit (or equivalently, service_count)
+
+**Technically a POMDP** (effective_age is internal), but mitigated by:
+- Derived features: service_count, total_time → can compute effective_age
+- RNN/transformer architectures can learn the hidden state from event history
+
+### POC Open Issues
+
+**Action space representation:**
+- How does RL specify when to service?
+- Options: continuous time output, decision at fixed intervals, decision at each event
+- For POC: suggest fixed decision intervals (e.g., every 10 days, choose service/wait)
+
+**Observation space:**
+- What does the agent see? Full state vs partial?
+- For POC: full state (time, time_since_service, subject features)
+
+**Reward/cost structure:**
+- Service cost: C_service (immediate cost)
+- Failure cost: C_failure (terminal cost)
+- **Revenue: R per time unit while operational** (critical - otherwise "fail fast" is optimal)
+- For POC: simple structure, e.g., R=1/day, C_service=50, C_failure=500
+- Trade-off: service extends revenue-generating life but costs money
+
+### POC Validation
+
+1. Generate training data with linear baseline
+2. Train generative model on data
+3. Run RL on ground truth → Policy_truth
+4. Run RL on learned model → Policy_learned
+5. Compare both policies on ground truth
+
+**Success criteria:**
+- RL beats linear baseline on ground truth (proves RL adds value)
+- Policy_learned performs close to Policy_truth (proves model is useful)
+
+### After POC
+
+Once POC works, add complexity incrementally:
+- Add second maintenance type (quick_fix vs full_service)
+- Add explicit degradation events
+- Add monitor event with mechanistic triggering
+- Explore continuous action spaces
+
+---
+
+## Scenario: Widget Maintenance (Full)
+
+A neutral domain (avoiding medical/clinical complexity) that captures the core dynamics of interest. This section describes the full scenario with all options; see Simple POC above for minimal starting point.
 
 ### Events
 
 | Event | Type | Description |
 |-------|------|-------------|
-| `degradation` | Recurring | Widget quality decreases |
+| `degradation` | Recurring | Widget quality decreases (see options below) |
 | `quick_fix` | Action | Cheap, short-term maintenance |
 | `full_service` | Action | Expensive, long-term maintenance |
 | `failure` | Terminal | Widget fails, high cost |
@@ -96,13 +176,50 @@ def failure_hazard_modifier(state, subject):
 
 `failure` incurs high cost C_fail = 1000 and terminates the journey.
 
+### Optional: Monitor Event
+
+An additional `monitor` event adds an observation/decision layer:
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `monitor` | Action | Inspect widget state, small cost |
+
+**Mechanistic triggering:**
+- `monitor` observes current degradation count
+- If degradation ≥ threshold_high → trigger `full_service`
+- If degradation ≥ threshold_low → trigger `quick_fix`
+- Otherwise → no action
+
+This creates a more realistic flow: inspect → decide → act
+
+**Optimisation levels:**
+1. **Parameter optimisation** (simple baseline): tune monitor interval and thresholds
+2. **RL on monitor timing**: when to inspect (state-dependent)
+3. **RL on full action space**: when to inspect AND what action to take after
+
 ### Baseline Heuristic Policy
 
 The ground truth simulator can run with a simple heuristic:
 
 ```python
-# Heuristic: quick_fix every 30 days, full_service every 90 days
+# Heuristic: monitor every 15 days, act based on degradation count
 def baseline_policy(state):
+    t_monitor = state.time_since('monitor') or state.time
+
+    if t_monitor >= 15:
+        return 'monitor'  # Triggers maintenance mechanistically
+    else:
+        return None  # No action
+
+# Monitor triggers (defined in event setup):
+# - degradation_count >= 3 → full_service
+# - degradation_count >= 1 → quick_fix
+```
+
+Alternative without monitor:
+```python
+# Direct heuristic: quick_fix every 30 days, full_service every 90 days
+def baseline_policy_direct(state):
     t_quick = state.time_since('quick_fix') or state.time
     t_full = state.time_since('full_service') or state.time
 
@@ -118,12 +235,60 @@ This provides:
 - A sensible baseline for comparison
 - Training data with "reasonable" maintenance patterns
 - A benchmark for RL to beat
+- Parameter optimisation as intermediate step before full RL
+
+### Policy Hierarchy
+
+Three levels of policy sophistication:
+
+**1. Global parameter optimisation:**
+- "Maintain every X days" → search for best X
+- Same rule for all subjects
+- Works if optimal policy is a simple fixed rule
+- Produces homogeneous training data (problem for learning)
+
+**2. Linear feature-based baseline:**
+- `interval = a + b·features` - simple mapping from features to timing
+- Different subjects get different intervals
+- Adds data diversity tied to features (needed for learning)
+- But can't capture non-linear effects or state-dependent decisions
+
+**3. RL (full policy learning):**
+- π(state, features) → action
+- Adapts to accumulated history, not just initial features
+- Captures non-linear feature interactions
+- Phase-dependent behaviour (early-life vs wear-out)
+
+### What RL Can Do That Linear Cannot
+
+1. **React to events**: "Just had a degradation → maintain sooner" - dynamic response to journey history
+2. **Non-linearity**: Feature interactions, thresholds (e.g., "if durability < 0.3 AND time > 20...")
+3. **Bathtub phases**: Different strategies for different life phases:
+   - Early: Watch for infant mortality defects
+   - Mid-life: Standard intervals
+   - Late: Aggressive maintenance as wear-out accelerates
+
+### Data Diversity for Learning
+
+A fixed-interval baseline produces homogeneous data - learner can't discover what happens at other intervals.
+
+**Solution**: Use linear feature-based baseline for training data generation:
+- `interval = base + weight·durability_feature`
+- Creates variation tied to features
+- Learner sees different intervals for different subjects
+- Can discover feature→outcome relationships
+
+### Validation Logic
+
+If RL on ground truth significantly beats linear baseline, AND RL on learned model approximates the ground-truth RL performance, the pipeline is validated:
+- Learned model captures enough dynamics for good policy learning
+- Gap between RL-on-learned vs RL-on-truth measures model quality
 
 ### What RL Should Discover
 
 An optimal policy should learn:
-1. **State-dependent timing** - maintain sooner when degradation count is high
-2. **Action selection** - prefer full_service when degradations accumulate
+1. **Feature-dependent timing** - high-durability subjects need less frequent maintenance
+2. **State-dependent adjustments** - maintain sooner if recent events indicate problems
 3. **Risk-cost trade-off** - balance maintenance cost vs failure probability
 
 ### Recoverable Structure (Validation Targets)
@@ -134,6 +299,27 @@ An optimal policy should learn:
 | Degradation accelerates failure | Learned model should show higher failure rate with more degradations |
 | Two maintenance types differ | Embeddings should separate quick_fix from full_service histories |
 | Optimal maintenance timing | RL policy on learned model should match RL on ground truth |
+
+### Embedding Validation
+
+A trained generative model may produce embeddings at different levels:
+
+**Subject-level embeddings:**
+- Represent inherent widget characteristics (from subject features)
+- Should correlate with ground-truth durability factors
+- Validate via: clustering should separate high/low durability subjects, regression should predict failure rates
+
+**Journey-level embeddings:**
+- Represent accumulated state (maintenance history, degradation count, etc.)
+- Should encode "risk state" at any point in time
+- Validate via: classification of "needs maintenance soon" vs "healthy", regression to predict time-to-failure
+
+**Downstream tasks for validation:**
+- Clustering: Do embeddings group subjects/journeys with similar ground-truth characteristics?
+- Classification: Can embeddings predict categorical outcomes (will fail within X days)?
+- Regression: Can embeddings predict continuous outcomes (expected time to failure, total cost)?
+
+This provides an additional validation axis beyond policy performance - even if RL policies match, embeddings should also recover meaningful structure.
 
 ---
 
@@ -154,6 +340,41 @@ features = {
 }
 ```
 
+### Degradation Modelling Options
+
+**Option A: Random arrivals (Poisson-like)**
+```python
+degradation = EventType('degradation', Exponential(rate=1/20))  # ~every 20 days avg
+```
+- Simple, stochastic
+- Harder to interpret/verify recovery
+
+**Option B: Fixed intervals**
+```python
+degradation = EventType('degradation', DeltaMass(interval))  # Exactly every X days
+# interval could be subject-dependent: interval = 15 + 10 * subject.features[0]
+```
+- Deterministic, interpretable
+- Can be reset by full_service (re-trigger with fresh interval)
+- Subject features modulate interval (some widgets degrade faster)
+
+**Option C: Observed only at monitor**
+- No independent degradation events
+- `monitor` event reveals current "degradation level" (could be time-based or latent)
+- Adds partial observability aspect
+
+**Option D: Implicit via time**
+- No explicit degradation events
+- Failure hazard depends directly on time-since-full-service
+- Simplest, but less rich state representation
+- **Note:** No point having monitor event if degradation is implicit - nothing to observe
+
+**Coupling with monitor event:**
+- Options A/B (explicit degradation): Monitor makes sense - observe degradation count, decide action
+- Options C/D (no explicit degradation): Monitor is redundant - just use time-based policy
+
+Option B (fixed intervals, subject-dependent) may be cleanest for validation: clear ground truth, easy to verify learned model recovers the interval structure, and monitor event has meaningful role.
+
 ### Event Definitions
 
 ```python
@@ -163,10 +384,11 @@ from discretiser import (
     make_censoring_event
 )
 
-# Degradation - happens periodically
+# Degradation - fixed interval (Option B)
+# Could make interval subject-dependent
 degradation = EventType(
     name='degradation',
-    survival_model=Exponential(rate=1/20),  # ~every 20 days on average
+    survival_model=DeltaMass(20),  # Exactly every 20 days
 )
 
 # Quick fix - ACTION (agent-controlled in RL, heuristic in baseline)
@@ -280,6 +502,9 @@ The bathtub model is attractive because:
 - Realistic failure pattern (early defects + wear-out)
 - Subject heterogeneity is natural (manufacturing variation)
 - Already have `CompoundWeibull` implemented
+
+**Note on subject heterogeneity:**
+No need for discrete widget "types" - the subject feature vector already provides continuous heterogeneity. Each subject is a point in feature space; ground-truth dynamics are parameterised by features. Different failure/degradation profiles emerge naturally from the feature distribution.
 
 ---
 
