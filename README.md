@@ -26,6 +26,8 @@ This framework generates synthetic data where the true dynamics are known, enabl
 
 The gap between policy-on-learned-model and policy-on-ground-truth measures how well the model captures actionable dynamics.
 
+**Architecture**: This repo provides simulation, synthetic data generation, and policy evaluation (including basic RL). Generative model training (learning surrogate models from data) happens externally - implementations may come from various sources (proprietary, open-source, academic).
+
 ## Installation
 
 ```bash
