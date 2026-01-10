@@ -26,6 +26,8 @@ This framework generates synthetic data where the true dynamics are known, enabl
 
 The gap between policy-on-learned-model and policy-on-ground-truth measures how well the model captures actionable dynamics.
 
+**Note:** The primary goal is validating that learned models capture the underlying dynamics, not the optimisation itself. Policy optimisation (RL or otherwise) is a tool for this evaluation - the choice of method is secondary to assessing model fidelity.
+
 **Architecture**: This repo provides simulation, synthetic data generation, and policy evaluation (including basic RL). Generative model training (learning surrogate models from data) happens externally - implementations may come from various sources (proprietary, open-source, academic).
 
 ## Installation
