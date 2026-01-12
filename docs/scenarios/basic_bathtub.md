@@ -42,7 +42,36 @@ failure_hazard = bathtub(effective_age)
 
 No hidden state → standard MDP, not POMDP.
 
-## Open Issues
+## Implementation
+
+The scenario is implemented in `src/scenarios/basic_bathtub.py`:
+
+```python
+from src.scenarios import (
+    BasicBathtubScenario,      # Full scenario class
+    EffectiveAgeBathtub,       # Survival model
+    generate_bathtub_subjects,  # Subject generation
+    generate_bathtub_data,      # Data generation with baseline
+    BathtubCosts,              # Cost structure
+)
+
+# Generate training data
+df, results, costs = generate_bathtub_data(
+    n_subjects=1000,
+    max_time=200.0,
+    baseline_a=20.0,  # Base interval
+    baseline_b=10.0,  # Durability coefficient
+)
+```
+
+**Cost structure** (defined in scenario):
+- Service cost: 50 per service
+- Failure cost: 500 terminal
+- Revenue: 1 per time unit while operational
+
+## Open Issues (RL Layer)
+
+These issues belong to the **RL layer**, not the scenario definition. The scenario provides dynamics and costs; RL decides how to act.
 
 **Action space representation:**
 - How does the agent specify when to service?
@@ -52,13 +81,6 @@ No hidden state → standard MDP, not POMDP.
 **Observation space:**
 - What does the agent see? Full state vs partial?
 - Suggestion: full state (time, time_since_service, subject features)
-
-**Reward/cost structure:**
-- Service cost: C_service (immediate cost)
-- Failure cost: C_failure (terminal cost)
-- **Revenue: R per time unit while operational** (critical - otherwise "fail fast" is optimal)
-- Example: R=1/day, C_service=50, C_failure=500
-- Trade-off: service extends revenue-generating life but costs money
 
 ## Validation
 
@@ -89,3 +111,43 @@ Once this works, add complexity incrementally:
 - Explicit degradation events
 - Monitor event with mechanistic triggering
 - Continuous action spaces
+
+## Future Investigation: Effective Age Model
+
+**TODO (deep dive later):** The effective age bathtub model has several aspects worth investigating:
+
+### 1. Relationship to Truncation
+
+- Currently using `truncate(effective_age)` to condition on survival
+- Is this mathematically correct when effective_age ≠ real time?
+- Alternative: sample from base distribution, reject if < effective_age
+- **Learning vs knowing:** Ground truth has exact formula for truncation. A learned model must discover this structure from rollouts:
+  - Learner sees: (state, action, outcome) trajectories
+  - Must learn: P(failure | effective_age, history, ...)
+  - The conditional/truncation structure is implicit in the data
+  - This is exactly what validation tests - can learner recover these dynamics?
+
+### 2. Implications for RL/Learning
+
+- Action space: How does effective age interact with continuous vs discrete actions?
+- State representation: Should RL see effective_age directly or compute it?
+- Temporal abstraction: Does effective age enable options/macro-actions?
+- **Rejuvenation as action dimension:** Can delta_t (service strength) be part of the action?
+  - Action = (when, how_much) instead of just (when)
+  - Different service levels → different rejuvenation amounts → different costs
+  - Creates trade-off: aggressive service (high delta_t, high cost) vs light service (low delta_t, low cost)
+  - The truncation offset becomes a function of cumulative action history
+  - Feasibility: Mathematically straightforward, but may complicate learning
+
+### 3. Alternatives Achieving Similar POC Goals
+
+- Simpler: Just scale hazard by service_count (no effective age concept)
+- More complex: Explicit degradation state that service partially resets
+- Different: Service affects one bathtub component but not the other
+
+### 4. Model Identifiability
+
+- Can a learner distinguish effective age from time-based hazard?
+- What data diversity is needed to learn the delta_t parameter?
+
+These questions don't block the POC but should be revisited when designing RL integration.

@@ -111,3 +111,44 @@ Each scenario module defines:
 - Validation criteria
 
 Notebooks import scenarios for exploration and visualisation.
+
+## Scenario vs RL Layer Separation
+
+Scenarios and RL/policy learning are **separate concerns**:
+
+| Scenarios Define | RL Layer Defines |
+|-----------------|------------------|
+| Ground truth dynamics (survival models) | Action space representation |
+| Subject features and generation | Decision timing (when to act) |
+| Event types and transitions | Policy architecture (NN, table, etc.) |
+| Cost/reward structure | Learning algorithm (PPO, DQN, etc.) |
+| Baseline policy (for data generation) | Exploration strategy |
+
+**Why separate?**
+- Same scenario can be used with different RL approaches
+- Same RL code can be reused across scenarios
+- Scenarios focus on "what happens", RL focuses on "what to do"
+- Cleaner testing: scenario dynamics tested independently
+
+**Interface:**
+- Scenarios provide `state`, `events`, and `costs`
+- RL wraps scenario in an environment (Gym-style or custom)
+- Actions are applied via `state.add_pending_event()` or similar
+
+The "Open Issues" in individual scenario docs (action space, observation space, etc.) belong to the **RL layer**, not the scenario definition.
+
+## Simulation Ending Terminology
+
+Following RL conventions (Gymnasium), simulations can end in different ways:
+
+| Flag | Meaning | Example |
+|------|---------|---------|
+| `terminated` | Natural end via terminal event | failure, healed, cured |
+| `truncated` | Artificial end due to time limit | reached `max_time` |
+| `censored` | Subtype of terminated - outcome unknown | lost to follow-up |
+
+**Key points:**
+- `terminated` and `truncated` are mutually exclusive
+- `censored` is always a subset of `terminated` (it's a type of terminal event)
+- Terminal events are scenario-specific (failure, healed, censored, etc.)
+- Cost calculations should check which terminal event occurred
