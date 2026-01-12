@@ -201,6 +201,7 @@ class Simulator:
 
         # Mark as truncated if we stopped due to time limit (not terminated)
         if not state.terminated:
+            state.advance_time(self.max_time)  # Subject "lived" until max_time
             state.mark_truncated()
 
         return SimulationResult(
