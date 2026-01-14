@@ -46,6 +46,30 @@ from .simulator import (
     extract_training_data,
 )
 
+from .policy import (
+    Action,
+    Policy,
+    NoOpPolicy,
+    LinearIntervalPolicy,
+    FixedIntervalPolicy,
+)
+
+from .runner import (
+    PolicyState,
+    make_policy_state_factory,
+    RunResult,
+    run_scenario,
+    compare_policies,
+)
+
+from .optimisation import (
+    OptimisationResult,
+    evaluate_policy_params,
+    optimise_policy,
+    grid_search,
+    sensitivity_analysis,
+)
+
 __all__ = [
     # Survival models
     "SurvivalModel",
@@ -83,4 +107,22 @@ __all__ = [
     "simulate_journey",
     "simulate_cohort_simple",
     "extract_training_data",
+    # Policy
+    "Action",
+    "Policy",
+    "NoOpPolicy",
+    "LinearIntervalPolicy",
+    "FixedIntervalPolicy",
+    # Runner
+    "PolicyState",
+    "make_policy_state_factory",
+    "RunResult",
+    "run_scenario",
+    "compare_policies",
+    # Optimisation
+    "OptimisationResult",
+    "evaluate_policy_params",
+    "optimise_policy",
+    "grid_search",
+    "sensitivity_analysis",
 ]
