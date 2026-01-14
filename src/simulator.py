@@ -20,11 +20,19 @@ from .state import Subject, State, EventRecord
 
 @dataclass
 class SimulationResult:
-    """Result of simulating a single subject."""
+    """
+    Result of simulating a single subject.
+
+    Ending flags (following RL conventions):
+    - terminated: Natural end via terminal event (failure, healed, censored, etc.)
+    - truncated: Artificial end due to max_time limit
+    - censored: Subtype of terminated where outcome is unknown
+    """
     subject: Subject
     history: List[EventRecord]
     final_time: float
     terminated: bool
+    truncated: bool
     censored: bool
 
     def to_dataframe(self) -> pd.DataFrame:
@@ -191,11 +199,17 @@ class Simulator:
             # Process triggered events
             self._process_triggers(state, subject, winner_event)
 
+        # Mark as truncated if we stopped due to time limit (not terminated)
+        if not state.terminated:
+            state.advance_time(self.max_time)  # Subject "lived" until max_time
+            state.mark_truncated()
+
         return SimulationResult(
             subject=subject,
             history=state.history.copy(),
             final_time=state.time,
             terminated=state.terminated,
+            truncated=state.truncated,
             censored=state.censored
         )
 

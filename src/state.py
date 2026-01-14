@@ -54,7 +54,12 @@ class State:
         self._occurred_events: Set[str] = set()
         self._event_counts: Dict[str, int] = {}
         self._last_event_time: Dict[str, float] = {}
+        # Ending flags (following RL conventions):
+        # - terminated: natural end via terminal event (failure, healed, censored, etc.)
+        # - truncated: artificial end due to max_time limit
+        # - censored: subtype of terminated where outcome is unknown
         self.terminated = False
+        self.truncated = False
         self.censored = False
         # Pending triggered events: event_name -> (absolute_time, triggered_by)
         self._pending_events: Dict[str, tuple] = {}
@@ -114,9 +119,18 @@ class State:
         self.time = new_time
 
     def mark_terminated(self, is_censoring: bool = False) -> None:
-        """Mark the simulation as terminated."""
+        """
+        Mark the simulation as terminated (natural end via terminal event).
+
+        Args:
+            is_censoring: True if this is a censoring event (outcome unknown)
+        """
         self.terminated = True
         self.censored = is_censoring
+
+    def mark_truncated(self) -> None:
+        """Mark the simulation as truncated (artificial end due to time limit)."""
+        self.truncated = True
 
     def get_last_n_events(self, n: int) -> List[EventRecord]:
         """Get the last n events (or all if fewer)."""
