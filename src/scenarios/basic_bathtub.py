@@ -54,10 +54,10 @@ class EffectiveAgeBathtub(SurvivalModel):
 
     def __init__(
         self,
-        shape1: float = 0.5,
-        scale1: float = 10.0,
-        shape2: float = 2.0,
-        scale2: float = 100.0,
+        shape1: float = 0.5,   # <1 = infant mortality (high early hazard)
+        scale1: float = 100.0,
+        shape2: float = 3.0,   # >1 = wear-out (increasing late hazard)
+        scale2: float = 200.0,
         delta_t: float = 15.0,
         durability_feature: str = 'durability'
     ):
@@ -447,16 +447,16 @@ class BasicBathtubScenario(Scenario):
 
     def __init__(
         self,
-        shape1: float = 0.5,
-        scale1: float = 10.0,
-        shape2: float = 2.0,
-        scale2: float = 100.0,
+        shape1: float = 0.5,   # <1 = infant mortality (high early hazard)
+        scale1: float = 100.0,
+        shape2: float = 3.0,   # >1 = wear-out (increasing late hazard)
+        scale2: float = 200.0,
         delta_t: float = 15.0,
         durability_mean: float = 1.0,
         durability_std: float = 0.3,
-        service_cost: float = 50.0,
+        service_cost: float = 20.0,
         failure_cost: float = 500.0,
-        revenue_per_time: float = 1.0
+        revenue_per_time: float = 3.0
     ):
         self.failure_model = EffectiveAgeBathtub(
             shape1=shape1,

@@ -91,9 +91,9 @@ def optimise_policy(
     start_time = time.time()
 
     def objective(params):
-        eval_seed = None if seed is None else seed + eval_count[0]
+        # Use fixed seed for consistency (not production - testing machinery)
         value = evaluate_policy_params(
-            params, scenario, policy_factory, n_subjects, max_time, eval_seed
+            params, scenario, policy_factory, n_subjects, max_time, seed
         )
         eval_count[0] += 1
         history.append((params.copy(), value))

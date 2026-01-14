@@ -343,8 +343,15 @@ class TestIntegration:
             assert result.final_time > 0
 
     def test_service_reduces_failure_rate(self):
-        """Service should reduce failure rate (compare serviced vs not)."""
+        """Service should reduce failure rate (compare serviced vs not).
+
+        Note: Uses shape1=1.0 (no infant mortality) so service is beneficial.
+        With shape1=0.5, frequent service keeps subjects in the high-hazard
+        infant mortality zone near t=0, which can be harmful.
+        """
         # This is a statistical test - with service, fewer early failures
+        # Use shape1=1.0 to avoid infant mortality - service is clearly helpful
+        scenario = BasicBathtubScenario(shape1=1.0, shape2=3.0)
 
         # Generate with baseline (service)
         np.random.seed(42)
@@ -353,6 +360,7 @@ class TestIntegration:
             max_time=50.0,  # Short time to see difference
             baseline_a=10,
             baseline_b=5,
+            scenario=scenario,
             seed=42
         )
 
@@ -369,6 +377,7 @@ class TestIntegration:
             max_time=50.0,
             baseline_a=1000,  # Effectively no service
             baseline_b=0,
+            scenario=scenario,
             seed=42
         )
 
