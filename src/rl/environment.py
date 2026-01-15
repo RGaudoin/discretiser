@@ -23,15 +23,16 @@ class ServiceEnv(gym.Env):
     The agent observes state features and decides when to schedule
     the next service. Episode ends on failure or truncation (max_time).
 
-    State space (8 features):
-        - time_since_last_service: Time since last service (or episode start)
+    State space (5 features):
+        - current_time: Current simulation time
+        - last_interval: Time elapsed in the interval that just ended
         - service_count: Number of services so far
         - avg_service_interval: Average time between services
         - durability: Subject durability feature
-        - delta_t: Age reduction per service (scenario parameter)
-        - service_cost: Cost per service (scenario parameter)
-        - revenue_per_time: Revenue rate (scenario parameter)
-        - failure_cost: Cost on failure (scenario parameter)
+
+    Note: Scenario parameters (delta_t, costs) are not included as they're
+    constant within a scenario. For multi-scenario training, these could be
+    added to enable generalisation across different cost structures.
 
     Action space (6 discrete actions):
         - 0: Immediate service (delay=0)
@@ -79,19 +80,15 @@ class ServiceEnv(gym.Env):
         self.failure_cost = scenario.costs.failure_cost
 
         # Define spaces
-        # State: 8 continuous features with reasonable upper bounds
-        # Note: SB3 normalizes observations, but bounded spaces help
+        # State: 5 normalised features (divided by max for 0-1 range)
         self.observation_space = spaces.Box(
-            low=np.array([0, 0, 0, 0, 0, 0, 0, 0], dtype=np.float32),
+            low=np.array([0, 0, 0, 0, 0], dtype=np.float32),
             high=np.array([
-                max_time,    # time_since_last_service
-                100,         # service_count (practical upper limit)
-                max_time,    # avg_service_interval
-                100,         # durability (rare to exceed with typical log-normal)
-                100,         # delta_t
-                1000,        # service_cost
-                100,         # revenue_per_time
-                10000,       # failure_cost
+                1.0,    # current_time / max_time
+                1.0,    # last_interval / max_time
+                1.0,    # service_count / 100
+                1.0,    # avg_service_interval / max_time
+                1.0,    # durability / 10 (log-normal, rarely exceeds 5)
             ], dtype=np.float32),
             dtype=np.float32
         )
@@ -106,6 +103,7 @@ class ServiceEnv(gym.Env):
         self._time_of_last_service: float = 0.0
         self._service_count: int = 0
         self._total_service_time: float = 0.0  # For computing average
+        self._last_interval: float = 0.0  # Interval that just ended
         self._cumulative_reward: float = 0.0
 
         # Seed
@@ -136,6 +134,7 @@ class ServiceEnv(gym.Env):
         self._time_of_last_service = 0.0
         self._service_count = 0
         self._total_service_time = 0.0
+        self._last_interval = 0.0  # No interval yet at episode start
         self._cumulative_reward = 0.0
         self._step_count = 0
 
@@ -198,6 +197,7 @@ class ServiceEnv(gym.Env):
                 self._service_count += 1
                 interval = step_result.event_time - self._time_of_last_service
                 self._total_service_time += interval
+                self._last_interval = interval  # Store BEFORE updating time
                 self._time_of_last_service = step_result.event_time
                 # Decision point - return to agent
                 break
@@ -213,9 +213,8 @@ class ServiceEnv(gym.Env):
         return self._get_observation(), reward, terminated, truncated, self._get_info()
 
     def _get_observation(self) -> np.ndarray:
-        """Construct observation vector."""
+        """Construct observation vector (normalised by dividing by max)."""
         current_time = self._state.time
-        time_since_last_service = current_time - self._time_of_last_service
 
         # Average service interval (0 if no services yet)
         if self._service_count > 0:
@@ -223,21 +222,18 @@ class ServiceEnv(gym.Env):
         else:
             avg_interval = 0.0
 
-        # Clip durability to observation space bounds (rare but possible to exceed)
-        durability = min(self._subject.get_feature('durability', 1.0), 100.0)
+        durability = self._subject.get_feature('durability', 1.0)
 
         obs = np.array([
-            time_since_last_service,
-            self._service_count,
-            avg_interval,
-            durability,
-            self.delta_t,
-            self.service_cost,
-            self.revenue_per_time,
-            self.failure_cost
+            current_time / self.max_time,
+            self._last_interval / self.max_time,
+            self._service_count / 100.0,
+            avg_interval / self.max_time,
+            durability / 10.0,  # log-normal with mean~1, rarely exceeds 5
         ], dtype=np.float32)
 
-        return obs
+        # Clip to observation space bounds (safety)
+        return np.clip(obs, 0.0, 1.0)
 
     def _get_info(self) -> Dict[str, Any]:
         """Return info dict."""
