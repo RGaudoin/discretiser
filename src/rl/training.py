@@ -46,11 +46,59 @@ class RewardLoggerCallback(BaseCallback):
         return True
 
 
+class ActionStatsCallback(BaseCallback):
+    """Callback to log action statistics to TensorBoard."""
+
+    def __init__(self, log_freq: int = 1000, verbose: int = 0):
+        super().__init__(verbose)
+        self.log_freq = log_freq
+        self.actions_buffer: List[int] = []
+
+    def _on_step(self) -> bool:
+        # Collect actions
+        if self.locals.get('actions') is not None:
+            actions = self.locals['actions']
+            if hasattr(actions, '__iter__'):
+                self.actions_buffer.extend(actions)
+            else:
+                self.actions_buffer.append(actions)
+
+        # Log stats every log_freq steps
+        if self.num_timesteps % self.log_freq == 0 and len(self.actions_buffer) > 0:
+            actions = np.array(self.actions_buffer)
+
+            # Convert action indices to delay values for more interpretable stats
+            delays = np.array([ServiceEnv.ACTION_DELAYS[a] for a in actions])
+            # Replace inf with max_time for stats (otherwise mean is inf)
+            finite_delays = delays[delays < float('inf')]
+
+            if len(finite_delays) > 0:
+                self.logger.record("actions/delay_mean", np.mean(finite_delays))
+                self.logger.record("actions/delay_min", np.min(finite_delays))
+                self.logger.record("actions/delay_max", np.max(finite_delays))
+                self.logger.record("actions/delay_std", np.std(finite_delays))
+
+            # Action index stats
+            self.logger.record("actions/index_mean", np.mean(actions))
+            self.logger.record("actions/index_std", np.std(actions))
+            self.logger.record("actions/index_min", np.min(actions))
+            self.logger.record("actions/index_max", np.max(actions))
+
+            # Fraction choosing "no service" (inf)
+            inf_frac = np.mean(delays == float('inf'))
+            self.logger.record("actions/inf_fraction", inf_frac)
+
+            # Clear buffer
+            self.actions_buffer = []
+
+        return True
+
+
 def train_dqn(
     scenario: Scenario,
     total_timesteps: int = 50_000,
-    learning_rate: float = 1e-4,
-    buffer_size: int = 10_000,
+    learning_rate: float = 5e-5,
+    buffer_size: int = 50_000,
     batch_size: int = 64,
     gamma: float = 0.99,
     exploration_fraction: float = 0.3,
@@ -61,6 +109,7 @@ def train_dqn(
     verbose: int = 1,
     eval_freq: Optional[int] = None,
     n_eval_episodes: int = 20,
+    tensorboard_log: Optional[str] = None,
 ) -> TrainingResult:
     """
     Train a DQN model on a scenario.
@@ -80,6 +129,7 @@ def train_dqn(
         verbose: Verbosity level (0=none, 1=info)
         eval_freq: Evaluate every N steps (None=no eval)
         n_eval_episodes: Episodes per evaluation
+        tensorboard_log: Directory for TensorBoard logs (None=no logging)
 
     Returns:
         TrainingResult with trained model and metrics
@@ -101,12 +151,18 @@ def train_dqn(
         target_update_interval=target_update_interval,
         verbose=verbose,
         seed=seed,
+        tensorboard_log=tensorboard_log,
     )
 
     # Set up callbacks
     callbacks = []
     reward_logger = RewardLoggerCallback()
     callbacks.append(reward_logger)
+
+    # Log action stats to TensorBoard
+    if tensorboard_log is not None:
+        action_stats = ActionStatsCallback(log_freq=1000)
+        callbacks.append(action_stats)
 
     eval_rewards = None
     if eval_freq is not None:
@@ -141,6 +197,7 @@ def evaluate_model(
     max_time: float = 150.0,
     seed: Optional[int] = None,
     deterministic: bool = True,
+    use_original_metric: bool = True,
 ) -> List[float]:
     """
     Evaluate a trained model.
@@ -152,12 +209,17 @@ def evaluate_model(
         max_time: Maximum episode length
         seed: Random seed
         deterministic: Use deterministic actions
+        use_original_metric: If True, return original reward metric (penalise failure)
+                            for comparison with baselines. If False, return training
+                            reward (reward survival).
 
     Returns:
         List of episode rewards
     """
     env = ServiceEnv(scenario, max_time=max_time, seed=seed)
     rewards = []
+
+    reward_key = 'cumulative_reward_original' if use_original_metric else 'cumulative_reward'
 
     for i in range(n_episodes):
         obs, _ = env.reset(seed=seed + i if seed else None)
@@ -167,7 +229,7 @@ def evaluate_model(
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 
-        rewards.append(info['cumulative_reward'])
+        rewards.append(info[reward_key])
 
     return rewards
 

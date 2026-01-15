@@ -34,22 +34,25 @@ class ServiceEnv(gym.Env):
     constant within a scenario. For multi-scenario training, these could be
     added to enable generalisation across different cost structures.
 
-    Action space (6 discrete actions):
-        - 0: Immediate service (delay=0)
-        - 1: delay=10
-        - 2: delay=20
-        - 3: delay=40
-        - 4: delay=80
-        - 5: No more service (delay=inf)
+    Action space (22 discrete actions):
+        - 0: Immediate service (delay≈0)
+        - 1-20: delay=5, 10, 15, ..., 100 (steps of 5)
+        - 21: No more service (delay=inf)
 
-    Reward:
+    Reward (training formulation - "reward survival"):
         Step-wise: revenue × time_elapsed - service_cost (if serviced)
-        On failure: -failure_cost
+        On failure: 0 (no penalty)
+        On truncation (max_time): +survival_bonus (= failure_cost)
+
+    This is equivalent to the original "penalise failure" formulation but
+    with more stable learning dynamics (no large negative spikes).
+    The original metric is tracked separately for comparison with baselines.
     """
 
     # Action delays (index -> delay)
+    # Granular: 0, 5, 10, ..., 100, plus infinity
     # Note: 0.1 instead of 0.0 to avoid infinite loops
-    ACTION_DELAYS = [0.1, 10.0, 20.0, 40.0, 80.0, float('inf')]
+    ACTION_DELAYS = [0.1] + list(range(5, 101, 5)) + [float('inf')]  # 22 actions
 
     metadata = {'render_modes': []}
 
@@ -135,8 +138,10 @@ class ServiceEnv(gym.Env):
         self._service_count = 0
         self._total_service_time = 0.0
         self._last_interval = 0.0  # No interval yet at episode start
-        self._cumulative_reward = 0.0
+        self._cumulative_reward = 0.0  # Training reward (reward survival)
+        self._cumulative_reward_original = 0.0  # Original metric (penalise failure)
         self._step_count = 0
+        self._failed = False  # Track if episode ended in failure
 
         return self._get_observation(), self._get_info()
 
@@ -188,6 +193,8 @@ class ServiceEnv(gym.Env):
             prev_time = self._state.time
 
             if step_result.truncated:
+                # Survived to max_time - add survival bonus (training reward)
+                reward += self.failure_cost  # survival_bonus = failure_cost
                 truncated = True
                 break
 
@@ -203,12 +210,21 @@ class ServiceEnv(gym.Env):
                 break
 
             elif step_result.terminated:
-                # Failure - subtract cost, episode ends
-                reward -= self.failure_cost
+                # Failure - no penalty in training reward (reward survival formulation)
+                # Original formulation would subtract failure_cost here
+                self._failed = True
                 terminated = True
                 break
 
+        # Update cumulative rewards
         self._cumulative_reward += reward
+        # Original metric: same as reward but with failure penalty, no survival bonus
+        reward_original = reward
+        if terminated:  # Failed this step
+            reward_original -= self.failure_cost  # Add the failure penalty
+        if truncated:  # Survived to max_time
+            reward_original -= self.failure_cost  # Remove the survival bonus
+        self._cumulative_reward_original += reward_original
 
         return self._get_observation(), reward, terminated, truncated, self._get_info()
 
@@ -240,6 +256,8 @@ class ServiceEnv(gym.Env):
         return {
             'time': self._state.time,
             'service_count': self._service_count,
-            'cumulative_reward': self._cumulative_reward,
+            'cumulative_reward': self._cumulative_reward,  # Training reward
+            'cumulative_reward_original': self._cumulative_reward_original,  # For comparison
+            'failed': self._failed,
             'durability': self._subject.get_feature('durability', 1.0) if self._subject else None
         }
