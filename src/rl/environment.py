@@ -34,25 +34,30 @@ class ServiceEnv(gym.Env):
     constant within a scenario. For multi-scenario training, these could be
     added to enable generalisation across different cost structures.
 
-    Action space (22 discrete actions):
+    Action space (configurable):
         - 0: Immediate service (delay≈0)
-        - 1-20: delay=5, 10, 15, ..., 100 (steps of 5)
-        - 21: No more service (delay=inf)
+        - 1 to N-1: delay in steps (default step=2, giving 0.1, 2, 4, ..., 100)
+        - N: No more service (delay=inf)
 
     Reward (training formulation - "reward survival"):
-        Step-wise: revenue × time_elapsed - service_cost (if serviced)
+        Step-wise: (revenue × time_elapsed - service_cost) / reward_scale
         On failure: 0 (no penalty)
-        On truncation (max_time): +survival_bonus (= failure_cost)
+        On truncation (max_time): +survival_bonus / reward_scale
 
-    This is equivalent to the original "penalise failure" formulation but
-    with more stable learning dynamics (no large negative spikes).
-    The original metric is tracked separately for comparison with baselines.
+    Rewards are scaled by reward_scale (default=failure_cost) to keep them
+    in a reasonable range (~[0, 2.5]) for more stable learning.
+    The original (unscaled) metric is tracked separately for comparison.
     """
 
-    # Action delays (index -> delay)
-    # Granular: 0, 5, 10, ..., 100, plus infinity
-    # Note: 0.1 instead of 0.0 to avoid infinite loops
-    ACTION_DELAYS = [0.1] + list(range(5, 101, 5)) + [float('inf')]  # 22 actions
+    @staticmethod
+    def make_action_delays(max_delay: float = 100.0, step: float = 2.0) -> list:
+        """Create action delay list with given step size."""
+        # 0.1 for "immediate", then regular steps, then infinity
+        delays = [0.1] + [float(d) for d in np.arange(step, max_delay + 0.1, step)] + [float('inf')]
+        return delays
+
+    # Default action delays (can be overridden via constructor)
+    ACTION_DELAYS = make_action_delays.__func__(100.0, 2.0)  # 52 actions
 
     metadata = {'render_modes': []}
 
@@ -61,7 +66,13 @@ class ServiceEnv(gym.Env):
         scenario: Scenario,
         max_time: float = 150.0,
         max_steps: int = 1000,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        reward_scale: Optional[float] = None,
+        action_step: float = 2.0,
+        max_action_delay: float = 100.0,
+        fixed_durability: Optional[float] = None,
+        use_optimal_policy: bool = False,
+        optimal_policy_params: tuple = (24.2, 24.2),
     ):
         """
         Args:
@@ -69,6 +80,16 @@ class ServiceEnv(gym.Env):
             max_time: Maximum episode length
             max_steps: Maximum steps per episode (safety limit)
             seed: Random seed
+            reward_scale: Scale factor for rewards (default=failure_cost).
+                         Rewards are divided by this to keep them in ~[0, 2.5].
+            action_step: Step size for action delays (default=2.0).
+                        Smaller = denser action space.
+            max_action_delay: Maximum delay in action space (default=100.0)
+            fixed_durability: If set, override subject durability with this value.
+                             Useful for debugging (removes heterogeneity).
+            use_optimal_policy: If True, ignore agent actions and use optimal
+                               linear policy. For debugging reward machinery.
+            optimal_policy_params: (a, b) for interval = a + b * durability
         """
         super().__init__()
 
@@ -81,6 +102,19 @@ class ServiceEnv(gym.Env):
         self.service_cost = scenario.costs.service_cost
         self.revenue_per_time = scenario.costs.revenue_per_time
         self.failure_cost = scenario.costs.failure_cost
+
+        # Reward scaling (default to failure_cost for ~[0, 2.5] range)
+        self.reward_scale = reward_scale if reward_scale is not None else self.failure_cost
+
+        # Fixed durability for debugging (removes heterogeneity)
+        self.fixed_durability = fixed_durability
+
+        # Debug: use optimal policy instead of agent actions
+        self.use_optimal_policy = use_optimal_policy
+        self.optimal_policy_params = optimal_policy_params
+
+        # Build action space
+        self.action_delays = self.make_action_delays(max_action_delay, action_step)
 
         # Define spaces
         # State: 5 normalised features (divided by max for 0-1 range)
@@ -96,8 +130,8 @@ class ServiceEnv(gym.Env):
             dtype=np.float32
         )
 
-        # Actions: 6 discrete choices
-        self.action_space = spaces.Discrete(len(self.ACTION_DELAYS))
+        # Actions: discrete choices based on action_delays
+        self.action_space = spaces.Discrete(len(self.action_delays))
 
         # Episode state (set in reset)
         self._subject: Optional[Subject] = None
@@ -127,6 +161,10 @@ class ServiceEnv(gym.Env):
         # Generate new subject
         subjects = self.scenario.generate_subjects(1, seed=self._np_random.integers(0, 2**31))
         self._subject = subjects[0]
+
+        # Override durability if fixed (for debugging)
+        if self.fixed_durability is not None:
+            self._subject.features['durability'] = self.fixed_durability
 
         # Create event registry, simulator, and state
         self._registry = self.scenario.create_event_registry()
@@ -164,7 +202,14 @@ class ServiceEnv(gym.Env):
         if self._step_count >= self.max_steps:
             return self._get_observation(), 0.0, False, True, self._get_info()
 
-        delay = self.ACTION_DELAYS[action]
+        # Get delay from action (or override with optimal policy for debugging)
+        if self.use_optimal_policy:
+            a, b = self.optimal_policy_params
+            durability = self._subject.get_feature('durability', 1.0)
+            delay = a + b * durability
+        else:
+            delay = self.action_delays[action]
+
         current_time = self._state.time
 
         # Schedule service (unless delay is inf)
@@ -216,9 +261,7 @@ class ServiceEnv(gym.Env):
                 terminated = True
                 break
 
-        # Update cumulative rewards
-        self._cumulative_reward += reward
-        # Original metric: same as reward but with failure penalty, no survival bonus
+        # Compute original metric (unscaled, for comparison with baselines)
         reward_original = reward
         if terminated:  # Failed this step
             reward_original -= self.failure_cost  # Add the failure penalty
@@ -226,7 +269,11 @@ class ServiceEnv(gym.Env):
             reward_original -= self.failure_cost  # Remove the survival bonus
         self._cumulative_reward_original += reward_original
 
-        return self._get_observation(), reward, terminated, truncated, self._get_info()
+        # Scale reward for training (keeps Q-values in reasonable range)
+        reward_scaled = reward / self.reward_scale
+        self._cumulative_reward += reward_scaled
+
+        return self._get_observation(), reward_scaled, terminated, truncated, self._get_info()
 
     def _get_observation(self) -> np.ndarray:
         """Construct observation vector (normalised by dividing by max)."""
