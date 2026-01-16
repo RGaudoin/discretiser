@@ -113,6 +113,37 @@ Two terminal conditions:
 
 **No SB3 wrapper**: Use SB3 API directly. Abstraction is at environment level (Gymnasium interface), allowing swap between ground-truth simulator and learnt models.
 
+## Hyperparameter Experiments
+
+### Challenge: High-Variance Environment
+
+The bathtub scenario has high reward variance (std≈137) with only ~21% survival rate even under optimal policy. This makes DQN learning difficult.
+
+### Best Configuration So Far
+
+```python
+net_arch=[64, 64]
+target_update_interval=2000
+learning_rate=3e-4
+batch_size=2048  # or 4096
+```
+
+**Observations:**
+- Slower target updates (2000-4000) reduce loss volatility significantly
+- Large batches (2048+) smooth gradient estimates in high-variance environment
+- Too conservative (interval=4000, LR=1e-4, batch=8192) → stable but gets stuck
+- interval=2000 + large batch → swings but shows learning, ends on good trajectory
+
+### TODO Experiments
+
+- [ ] Learning rate schedule (start higher, decay)
+- [ ] Prioritised experience replay (focus on surprising transitions)
+- [ ] Double DQN (reduce overestimation)
+- [ ] Longer training (400k+ steps)
+- [ ] Soft target updates (`tau=0.005`, `target_update_interval=1`)
+- [ ] Simpler action space (`action_step=10`, ~12 actions)
+- [ ] Variable durability (once fixed durability=1.0 works)
+
 ## Open: Claude Agent Usage
 
 Options for implementation:
