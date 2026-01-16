@@ -73,6 +73,7 @@ class ServiceEnv(gym.Env):
         fixed_durability: Optional[float] = None,
         use_optimal_policy: bool = False,
         optimal_policy_params: tuple = (24.2, 24.2),
+        continuous_actions: bool = False,
     ):
         """
         Args:
@@ -83,19 +84,23 @@ class ServiceEnv(gym.Env):
             reward_scale: Scale factor for rewards (default=failure_cost).
                          Rewards are divided by this to keep them in ~[0, 2.5].
             action_step: Step size for action delays (default=2.0).
-                        Smaller = denser action space.
+                        Smaller = denser action space. Ignored if continuous_actions=True.
             max_action_delay: Maximum delay in action space (default=100.0)
             fixed_durability: If set, override subject durability with this value.
                              Useful for debugging (removes heterogeneity).
             use_optimal_policy: If True, ignore agent actions and use optimal
                                linear policy. For debugging reward machinery.
             optimal_policy_params: (a, b) for interval = a + b * durability
+            continuous_actions: If True, use continuous action space [0, max_action_delay].
+                               For use with SAC, TD3, etc.
         """
         super().__init__()
 
         self.scenario = scenario
         self.max_time = max_time
         self.max_steps = max_steps
+        self.continuous_actions = continuous_actions
+        self.max_action_delay = max_action_delay
 
         # Extract scenario parameters for state
         self.delta_t = getattr(scenario.failure_model, 'delta_t', 0.0)
@@ -113,7 +118,7 @@ class ServiceEnv(gym.Env):
         self.use_optimal_policy = use_optimal_policy
         self.optimal_policy_params = optimal_policy_params
 
-        # Build action space
+        # Build action space (discrete version, also used for action_delays reference)
         self.action_delays = self.make_action_delays(max_action_delay, action_step)
 
         # Define spaces
@@ -130,8 +135,17 @@ class ServiceEnv(gym.Env):
             dtype=np.float32
         )
 
-        # Actions: discrete choices based on action_delays
-        self.action_space = spaces.Discrete(len(self.action_delays))
+        # Actions: discrete or continuous
+        if continuous_actions:
+            # Continuous: [0, max_action_delay] - agent outputs delay directly
+            self.action_space = spaces.Box(
+                low=np.array([0.0], dtype=np.float32),
+                high=np.array([max_action_delay], dtype=np.float32),
+                dtype=np.float32
+            )
+        else:
+            # Discrete: choices based on action_delays
+            self.action_space = spaces.Discrete(len(self.action_delays))
 
         # Episode state (set in reset)
         self._subject: Optional[Subject] = None
@@ -185,13 +199,13 @@ class ServiceEnv(gym.Env):
 
     def step(
         self,
-        action: int
+        action
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """
         Execute action and advance simulation.
 
         Args:
-            action: Index into ACTION_DELAYS
+            action: Index into ACTION_DELAYS (discrete) or delay value (continuous)
 
         Returns:
             observation, reward, terminated, truncated, info
@@ -207,7 +221,11 @@ class ServiceEnv(gym.Env):
             a, b = self.optimal_policy_params
             durability = self._subject.get_feature('durability', 1.0)
             delay = a + b * durability
+        elif self.continuous_actions:
+            # Continuous: action is the delay directly (as array)
+            delay = float(np.clip(action[0], 0.0, self.max_action_delay))
         else:
+            # Discrete: action is index into action_delays
             delay = self.action_delays[action]
 
         current_time = self._state.time
