@@ -140,7 +140,7 @@ class ServiceEnv(gym.Env):
         self._time_of_last_service: float = 0.0
         self._service_count: int = 0
         self._total_service_time: float = 0.0  # For computing average
-        self._last_interval: float = 0.0  # Interval that just ended
+        self._last_interval: float = self.max_time  # max_time = "no recent service"
         self._cumulative_reward: float = 0.0
 
         # Seed
@@ -175,7 +175,7 @@ class ServiceEnv(gym.Env):
         self._time_of_last_service = 0.0
         self._service_count = 0
         self._total_service_time = 0.0
-        self._last_interval = 0.0  # No interval yet at episode start
+        self._last_interval = self.max_time  # max_time = "no recent service"
         self._cumulative_reward = 0.0  # Training reward (reward survival)
         self._cumulative_reward_original = 0.0  # Original metric (penalise failure)
         self._step_count = 0
@@ -279,11 +279,11 @@ class ServiceEnv(gym.Env):
         """Construct observation vector (normalised by dividing by max)."""
         current_time = self._state.time
 
-        # Average service interval (0 if no services yet)
+        # Average service interval (max_time if no services yet = "no service history")
         if self._service_count > 0:
             avg_interval = self._total_service_time / self._service_count
         else:
-            avg_interval = 0.0
+            avg_interval = self.max_time
 
         durability = self._subject.get_feature('durability', 1.0)
 
