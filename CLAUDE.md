@@ -27,7 +27,16 @@ Repeat until censoring or max_time
 
 ## Public/Private Repository Split
 
-This repo is designed to be **public**. Advanced algorithms live in `discretiser-learn` (private).
+This repo is designed to be **public**. Surrogate models and advanced algorithms live in `discretiser-surrogate` (private).
+
+### Why the Split?
+
+This public repo provides the **framework**: synthetic data generation with known ground-truth dynamics. But for **real-world applications**, we don't have a true data generator — only historical observations.
+
+The private `discretiser-surrogate` repo solves this by:
+1. Learning **surrogate models** from data that mimic the true (unknown) generator
+2. Using these surrogates as environments for policy optimisation
+3. Validating on synthetic data first (where we can compare against ground truth)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -36,35 +45,37 @@ This repo is designed to be **public**. Advanced algorithms live in `discretiser
 │  • Simulation framework (events, state, survival models)        │
 │  • Synthetic data generation with known ground-truth dynamics   │
 │  • RL environment (ServiceEnv) and evaluation utilities         │
-│  • Notebooks showing results (may import from discretiser-learn)│
+│  • Teaser notebooks (pre-executed, import from private repo)    │
 │  • Interfaces for trained models (TrainedModelSurvival)         │
 └─────────────────────────────────────────────────────────────────┘
                               ↑
                          imports from
                               │
 ┌─────────────────────────────────────────────────────────────────┐
-│                 discretiser-learn (private)                     │
+│               discretiser-surrogate (private)                   │
 ├─────────────────────────────────────────────────────────────────┤
-│  • Advanced RL algorithms (expected-value RL, custom AC)        │
-│  • Generative models that learn from synthetic data             │
-│  • Surrogate environments based on learned models               │
-│  • Design documents and research notes                          │
+│  • Surrogate models: learn generative models from data          │
+│  • Advanced RL: expected-value RL, custom Actor-Critic          │
+│  • Surrogate environments that replace the true generator       │
+│  • Enables optimisation on real-world data                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Workflow:**
+**Validation workflow:**
 1. Generate synthetic data here with known ground-truth dynamics
-2. Train advanced models via discretiser-learn
-3. Use learned models as surrogate environments
-4. Run RL to find optimal policy
-5. Validate policy against ground-truth simulation
+2. Fit surrogate model to the synthetic data (discretiser-surrogate)
+3. Optimise policy on the surrogate
+4. Compare against policy optimised on ground-truth
+5. If results match → surrogate approach is valid for real data
+
+**Teaser notebooks:** Some notebooks in this repo import from `discretiser-surrogate` and show pre-executed results. They demonstrate what's achievable but won't run without the private package.
 
 **Installing discretiser:**
 ```bash
 pip install git+https://github.com/RGaudoin/discretiser.git
 ```
 
-**For advanced algorithms:** Contact for access to discretiser-learn.
+**For surrogate models and advanced algorithms:** Contact for access to discretiser-surrogate.
 
 ## File Structure
 
@@ -88,8 +99,8 @@ discretiser/
 +-- notebooks/
 |   +-- journey_simulation_examples.ipynb
 |   +-- rl_quickstart.ipynb   # Minimal RL example (runnable)
-|   +-- rl_dqn.ipynb          # DQN experiments (results, needs discretiser-learn)
-|   +-- rl_sac.ipynb          # SAC experiments (results, needs discretiser-learn)
+|   +-- rl_dqn.ipynb          # DQN experiments (results, needs discretiser-surrogate)
+|   +-- rl_sac.ipynb          # SAC experiments (results, needs discretiser-surrogate)
 +-- README.md
 +-- CLAUDE.md
 ```
