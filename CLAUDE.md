@@ -27,7 +27,7 @@ Repeat until censoring or max_time
 
 ## Public/Private Repository Split
 
-This repo is designed to be **public**. Model training code lives in separate **private** repositories.
+This repo is designed to be **public**. Advanced algorithms live in `discretiser-learn` (private).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -35,37 +35,36 @@ This repo is designed to be **public**. Model training code lives in separate **
 ├─────────────────────────────────────────────────────────────────┤
 │  • Simulation framework (events, state, survival models)        │
 │  • Synthetic data generation with known ground-truth dynamics   │
+│  • RL environment (ServiceEnv) and evaluation utilities         │
+│  • Notebooks showing results (may import from discretiser-learn)│
 │  • Interfaces for trained models (TrainedModelSurvival)         │
-│  • Generic RL for policy optimisation                           │
-│  • Validation (compare policy on trained model vs ground truth) │
 └─────────────────────────────────────────────────────────────────┘
                               ↑
                          imports from
                               │
 ┌─────────────────────────────────────────────────────────────────┐
-│                    training repo (private)                      │
+│                 discretiser-learn (private)                     │
 ├─────────────────────────────────────────────────────────────────┤
-│  • Neural network architectures                                 │
-│  • Training loops for generative models                         │
-│  • Model export (pickle, ONNX, etc.)                            │
+│  • Advanced RL algorithms (expected-value RL, custom AC)        │
+│  • Generative models that learn from synthetic data             │
+│  • Surrogate environments based on learned models               │
+│  • Design documents and research notes                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **Workflow:**
 1. Generate synthetic data here with known ground-truth dynamics
-2. Train generative model externally (private repo)
-3. Import trained model here via `TrainedModelSurvival` wrapper
-4. Run generic RL to find optimal policy on trained model
+2. Train advanced models via discretiser-learn
+3. Use learned models as surrogate environments
+4. Run RL to find optimal policy
 5. Validate policy against ground-truth simulation
 
-**Private repo also exports embeddings:**
-- Subject-level embeddings → validate via risk stratification vs actual outcomes
-- Journey-level embeddings → validate intervention optimality
-
-**Installing discretiser in training repo:**
+**Installing discretiser:**
 ```bash
 pip install git+https://github.com/RGaudoin/discretiser.git
 ```
+
+**For advanced algorithms:** Contact for access to discretiser-learn.
 
 ## File Structure
 
@@ -77,12 +76,20 @@ discretiser/
 |   +-- events.py         # EventType definitions + triggering rules
 |   +-- state.py          # State, Subject, EmbeddingState, generators
 |   +-- simulator.py      # Competing risks loop + DataFrame export
+|   +-- rl/
+|       +-- environment.py   # ServiceEnv (Gymnasium wrapper)
+|       +-- evaluation.py    # evaluate_model, compare_with_baselines
+|       +-- scenarios.py     # get_default_scenario, baseline policies
+|       +-- callbacks.py     # Training callbacks for logging
 +-- docs/
 |   +-- simulation_framework.md
 |   +-- survival_models.md
 |   +-- trained_model_integration.md
 +-- notebooks/
 |   +-- journey_simulation_examples.ipynb
+|   +-- rl_quickstart.ipynb   # Minimal RL example (runnable)
+|   +-- rl_dqn.ipynb          # DQN experiments (results, needs discretiser-learn)
+|   +-- rl_sac.ipynb          # SAC experiments (results, needs discretiser-learn)
 +-- README.md
 +-- CLAUDE.md
 ```

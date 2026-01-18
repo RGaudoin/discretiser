@@ -128,63 +128,6 @@ def train_dqn(
     )
 
 
-def evaluate_model(
-    model: DQN,
-    scenario: Scenario,
-    n_episodes: int = 100,
-    max_time: float = 150.0,
-    seed: Optional[int] = None,
-    deterministic: bool = True,
-    use_original_metric: bool = True,
-    action_step: float = 2.0,
-    reward_scale: Optional[float] = None,
-    fixed_durability: Optional[float] = None,
-) -> List[float]:
-    """
-    Evaluate a trained model.
-
-    Args:
-        model: Trained DQN model
-        scenario: Scenario to evaluate on
-        n_episodes: Number of evaluation episodes
-        max_time: Maximum episode length
-        seed: Random seed
-        deterministic: Use deterministic actions
-        use_original_metric: If True, return original reward metric (penalise failure)
-                            for comparison with baselines. If False, return training
-                            reward (reward survival).
-        action_step: Action delay step size (must match training env)
-        reward_scale: Reward scaling factor (must match training env)
-        fixed_durability: Fixed durability value (must match training env)
-
-    Returns:
-        List of episode rewards
-    """
-    env = ServiceEnv(
-        scenario,
-        max_time=max_time,
-        seed=seed,
-        action_step=action_step,
-        reward_scale=reward_scale,
-        fixed_durability=fixed_durability,
-    )
-    rewards = []
-
-    reward_key = 'cumulative_reward_original' if use_original_metric else 'cumulative_reward'
-
-    for i in range(n_episodes):
-        obs, _ = env.reset(seed=seed + i if seed else None)
-        done = False
-        while not done:
-            action, _ = model.predict(obs, deterministic=deterministic)
-            obs, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
-
-        rewards.append(info[reward_key])
-
-    return rewards
-
-
 class DQNPolicy(Policy):
     """
     Policy wrapper for trained DQN model.
