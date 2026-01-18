@@ -38,6 +38,10 @@ The private `discretiser-surrogate` repo solves this by:
 2. Using these surrogates as environments for policy optimisation
 3. Validating on synthetic data first (where we can compare against ground truth)
 
+**Bidirectional dependency:**
+- **discretiser-surrogate → here**: The private repo imports from this package for simulation, environments, and survival models
+- **here → discretiser-surrogate**: Demo notebooks in this repo import from the private repo
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    discretiser (public)                         │
@@ -45,12 +49,12 @@ The private `discretiser-surrogate` repo solves this by:
 │  • Simulation framework (events, state, survival models)        │
 │  • Synthetic data generation with known ground-truth dynamics   │
 │  • RL environment (ServiceEnv) and evaluation utilities         │
-│  • Teaser notebooks (pre-executed, import from private repo)    │
+│  • Demo notebooks (import from private repo, outputs committed) │
 │  • Interfaces for trained models (TrainedModelSurvival)         │
 └─────────────────────────────────────────────────────────────────┘
                               ↑
-                         imports from
-                              │
+                    bidirectional dependency
+                              ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │               discretiser-surrogate (private)                   │
 ├─────────────────────────────────────────────────────────────────┤
@@ -68,7 +72,7 @@ The private `discretiser-surrogate` repo solves this by:
 4. Compare against policy optimised on ground-truth
 5. If results match → surrogate approach is valid for real data
 
-**Teaser notebooks:** Some notebooks in this repo import from `discretiser-surrogate` and show pre-executed results. They demonstrate what's achievable but won't run without the private package.
+**Demo notebooks:** Some notebooks in this repo import from `discretiser-surrogate` with outputs committed. They demonstrate what's achievable but running them requires the private package (will raise `ImportError: No module named 'discretiser_surrogate'`).
 
 **Installing discretiser:**
 ```bash
@@ -99,8 +103,8 @@ discretiser/
 +-- notebooks/
 |   +-- journey_simulation_examples.ipynb
 |   +-- rl_quickstart.ipynb   # Minimal RL example (runnable)
-|   +-- rl_dqn.ipynb          # DQN experiments (results, needs discretiser-surrogate)
-|   +-- rl_sac.ipynb          # SAC experiments (results, needs discretiser-surrogate)
+|   +-- rl_dqn.ipynb          # DQN experiments (demo, needs discretiser-surrogate)
+|   +-- rl_sac.ipynb          # SAC experiments (demo, needs discretiser-surrogate)
 +-- README.md
 +-- CLAUDE.md
 ```
