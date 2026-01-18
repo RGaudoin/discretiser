@@ -27,7 +27,16 @@ Repeat until censoring or max_time
 
 ## Public/Private Repository Split
 
-This repo is designed to be **public**. Model training code lives in separate **private** repositories.
+This repo is designed to be **public**. Surrogate models and advanced algorithms live in `discretiser-surrogate` (private).
+
+### Why the Split?
+
+This public repo provides the **framework**: synthetic data generation with known ground-truth dynamics. But for **real-world applications**, we don't have a true data generator — only historical observations.
+
+The private `discretiser-surrogate` repo solves this by:
+1. Learning **surrogate models** from data that mimic the true (unknown) generator
+2. Using these surrogates as environments for policy optimisation
+3. Validating on synthetic data first (where we can compare against ground truth)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -35,37 +44,38 @@ This repo is designed to be **public**. Model training code lives in separate **
 ├─────────────────────────────────────────────────────────────────┤
 │  • Simulation framework (events, state, survival models)        │
 │  • Synthetic data generation with known ground-truth dynamics   │
+│  • RL environment (ServiceEnv) and evaluation utilities         │
+│  • Teaser notebooks (pre-executed, import from private repo)    │
 │  • Interfaces for trained models (TrainedModelSurvival)         │
-│  • Generic RL for policy optimisation                           │
-│  • Validation (compare policy on trained model vs ground truth) │
 └─────────────────────────────────────────────────────────────────┘
                               ↑
                          imports from
                               │
 ┌─────────────────────────────────────────────────────────────────┐
-│                    training repo (private)                      │
+│               discretiser-surrogate (private)                   │
 ├─────────────────────────────────────────────────────────────────┤
-│  • Neural network architectures                                 │
-│  • Training loops for generative models                         │
-│  • Model export (pickle, ONNX, etc.)                            │
+│  • Surrogate models: learn generative models from data          │
+│  • Advanced RL: expected-value RL, custom Actor-Critic          │
+│  • Surrogate environments that replace the true generator       │
+│  • Enables optimisation on real-world data                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Workflow:**
+**Validation workflow:**
 1. Generate synthetic data here with known ground-truth dynamics
-2. Train generative model externally (private repo)
-3. Import trained model here via `TrainedModelSurvival` wrapper
-4. Run generic RL to find optimal policy on trained model
-5. Validate policy against ground-truth simulation
+2. Fit surrogate model to the synthetic data (discretiser-surrogate)
+3. Optimise policy on the surrogate
+4. Compare against policy optimised on ground-truth
+5. If results match → surrogate approach is valid for real data
 
-**Private repo also exports embeddings:**
-- Subject-level embeddings → validate via risk stratification vs actual outcomes
-- Journey-level embeddings → validate intervention optimality
+**Teaser notebooks:** Some notebooks in this repo import from `discretiser-surrogate` and show pre-executed results. They demonstrate what's achievable but won't run without the private package.
 
-**Installing discretiser in training repo:**
+**Installing discretiser:**
 ```bash
 pip install git+https://github.com/RGaudoin/discretiser.git
 ```
+
+**For surrogate models and advanced algorithms:** Contact for access to discretiser-surrogate.
 
 ## File Structure
 
@@ -77,12 +87,20 @@ discretiser/
 |   +-- events.py         # EventType definitions + triggering rules
 |   +-- state.py          # State, Subject, EmbeddingState, generators
 |   +-- simulator.py      # Competing risks loop + DataFrame export
+|   +-- rl/
+|       +-- environment.py   # ServiceEnv (Gymnasium wrapper)
+|       +-- evaluation.py    # evaluate_model, compare_with_baselines
+|       +-- scenarios.py     # get_default_scenario, baseline policies
+|       +-- callbacks.py     # Training callbacks for logging
 +-- docs/
 |   +-- simulation_framework.md
 |   +-- survival_models.md
 |   +-- trained_model_integration.md
 +-- notebooks/
 |   +-- journey_simulation_examples.ipynb
+|   +-- rl_quickstart.ipynb   # Minimal RL example (runnable)
+|   +-- rl_dqn.ipynb          # DQN experiments (results, needs discretiser-surrogate)
+|   +-- rl_sac.ipynb          # SAC experiments (results, needs discretiser-surrogate)
 +-- README.md
 +-- CLAUDE.md
 ```
