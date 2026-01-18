@@ -21,3 +21,6 @@ venv/
 # CLAUDE.local.md is for private/personal notes
 CLAUDE.local.md
 .claude/
+models/
+logs/
+checkpoints/

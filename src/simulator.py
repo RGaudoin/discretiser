@@ -19,6 +19,20 @@ from .state import Subject, State, EventRecord
 
 
 @dataclass
+class StepResult:
+    """
+    Result of stepping the simulation by one event.
+
+    Used by both simulate_subject() and RL environments.
+    """
+    event_name: Optional[str]  # None if no event possible
+    event_time: Optional[float]
+    terminated: bool  # True if terminal event occurred
+    truncated: bool   # True if max_time reached
+    done: bool        # True if episode ended (terminated or truncated)
+
+
+@dataclass
 class SimulationResult:
     """
     Result of simulating a single subject.
@@ -125,84 +139,13 @@ class Simulator:
                 state.record_event(event_name, time)
                 state.advance_time(time)
 
+        # Run simulation using step_one_event
         event_count = 0
-
-        while not state.terminated and state.time < self.max_time:
-            # Safety limit
+        while event_count < self.max_events:
+            step_result = self.step_one_event(state, subject)
             event_count += 1
-            if event_count > self.max_events:
+            if step_result.done:
                 break
-
-            # Get active events and sample times
-            active_events = self.registry.get_active_events(state, subject)
-            if not active_events:
-                break
-
-            # Sample time to each competing event
-            times: Dict[str, float] = {}
-            triggered_by: Dict[str, str] = {}  # Track which events are pending triggers
-
-            for event in active_events:
-                dt = event.sample_time(state, subject)
-                if dt < float('inf'):
-                    times[event.name] = state.time + dt
-
-            # Include pending triggered events in competition
-            for event_name, (scheduled_time, source) in state.get_pending_events().items():
-                # Pending event competes if its time is at or after current time
-                if scheduled_time >= state.time:
-                    # Only include if no sampled time or pending is earlier
-                    if event_name not in times or scheduled_time < times[event_name]:
-                        times[event_name] = scheduled_time
-                        triggered_by[event_name] = source
-
-            if not times:
-                break
-
-            # Find winner (minimum time)
-            winner_name = min(times, key=times.get)
-            winner_time = times[winner_name]
-
-            # Check max time
-            if winner_time >= self.max_time:
-                break
-
-            # Get the winning event type
-            winner_event = self.registry[winner_name]
-
-            # Check if winner was a pending triggered event
-            winner_triggered_by = triggered_by.get(winner_name)
-            if winner_triggered_by:
-                state.pop_pending_event(winner_name)
-
-            # Advance time and record event
-            state.advance_time(winner_time)
-            state.record_event(winner_name, winner_time, triggered_by=winner_triggered_by)
-
-            # Clean up any stale pending events (scheduled before current time)
-            state.pop_stale_pending()
-
-            # Process cancellations - remove specified events from pending
-            for cancelled_event in winner_event.cancels:
-                state.pop_pending_event(cancelled_event)
-
-            # Clear all pending if event requests it or in autoregressive mode
-            if winner_event.clears_all_pending or self.mode == 'autoregressive':
-                state.clear_pending_events()
-
-            # Handle termination
-            if winner_event.terminal:
-                state.mark_terminated(is_censoring=winner_event.is_censoring)
-                state.clear_pending_events()  # Cancel any pending triggered events
-                break
-
-            # Process triggered events
-            self._process_triggers(state, subject, winner_event)
-
-        # Mark as truncated if we stopped due to time limit (not terminated)
-        if not state.terminated:
-            state.advance_time(self.max_time)  # Subject "lived" until max_time
-            state.mark_truncated()
 
         return SimulationResult(
             subject=subject,
@@ -263,6 +206,131 @@ class Simulator:
                     target_time,
                     triggered_by=source_event.name
                 )
+
+    def step_one_event(
+        self,
+        state: State,
+        subject: Subject
+    ) -> StepResult:
+        """
+        Advance simulation by one event.
+
+        Samples competing event times, finds winner, processes it.
+        Used by simulate_subject() and RL environments.
+
+        Args:
+            state: Current simulation state (modified in place)
+            subject: The subject being simulated
+
+        Returns:
+            StepResult with event info and termination flags
+        """
+        # Check if already terminated
+        if state.terminated:
+            return StepResult(
+                event_name=None, event_time=None,
+                terminated=True, truncated=False, done=True
+            )
+
+        # Check max_time
+        if state.time >= self.max_time:
+            state.mark_truncated()
+            return StepResult(
+                event_name=None, event_time=None,
+                terminated=False, truncated=True, done=True
+            )
+
+        # Get active events and sample times
+        active_events = self.registry.get_active_events(state, subject)
+        if not active_events:
+            # No events possible - truncate
+            state.advance_time(self.max_time)
+            state.mark_truncated()
+            return StepResult(
+                event_name=None, event_time=None,
+                terminated=False, truncated=True, done=True
+            )
+
+        # Sample time to each competing event
+        times: Dict[str, float] = {}
+        triggered_by: Dict[str, str] = {}
+
+        for event in active_events:
+            dt = event.sample_time(state, subject)
+            if dt < float('inf'):
+                times[event.name] = state.time + dt
+
+        # Include pending triggered events in competition
+        for event_name, (scheduled_time, source) in state.get_pending_events().items():
+            if scheduled_time >= state.time:
+                if event_name not in times or scheduled_time < times[event_name]:
+                    times[event_name] = scheduled_time
+                    triggered_by[event_name] = source
+
+        if not times:
+            # No events possible
+            state.advance_time(self.max_time)
+            state.mark_truncated()
+            return StepResult(
+                event_name=None, event_time=None,
+                terminated=False, truncated=True, done=True
+            )
+
+        # Find winner (minimum time)
+        winner_name = min(times, key=times.get)
+        winner_time = times[winner_name]
+
+        # Check max_time
+        if winner_time >= self.max_time:
+            state.advance_time(self.max_time)
+            state.mark_truncated()
+            return StepResult(
+                event_name=None, event_time=None,
+                terminated=False, truncated=True, done=True
+            )
+
+        # Get the winning event type
+        winner_event = self.registry[winner_name]
+
+        # Check if winner was a pending triggered event
+        winner_triggered_by = triggered_by.get(winner_name)
+        if winner_triggered_by:
+            state.pop_pending_event(winner_name)
+
+        # Advance time and record event
+        state.advance_time(winner_time)
+        state.record_event(winner_name, winner_time, triggered_by=winner_triggered_by)
+
+        # Clean up any stale pending events
+        state.pop_stale_pending()
+
+        # Process cancellations
+        for cancelled_event in winner_event.cancels:
+            state.pop_pending_event(cancelled_event)
+
+        # Clear all pending if event requests it or in autoregressive mode
+        if winner_event.clears_all_pending or self.mode == 'autoregressive':
+            state.clear_pending_events()
+
+        # Handle termination
+        terminated = False
+        if winner_event.terminal:
+            state.mark_terminated(is_censoring=winner_event.is_censoring)
+            state.clear_pending_events()
+            terminated = True
+        else:
+            # Process triggered events
+            self._process_triggers(state, subject, winner_event)
+            # Check if triggers caused termination
+            terminated = state.terminated
+
+        return StepResult(
+            event_name=winner_name,
+            event_time=winner_time,
+            terminated=terminated,
+            truncated=False,
+            done=terminated
+        )
 
     def simulate_cohort(
         self,
