@@ -24,3 +24,4 @@ CLAUDE.local.md
 models/
 logs/
 checkpoints/
+*.egg-info/
