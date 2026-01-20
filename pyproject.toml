@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "discretiser"
+version = "0.1.0"
+description = "Competing risks simulation for synthetic patient journeys"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "gymnasium",
+]
+
+[project.optional-dependencies]
+rl = [
+    "stable-baselines3",
+    "torch",
+]
+dev = [
+    "pytest",
+    "jupyter",
+    "matplotlib",
+]
+
+[tool.setuptools]
+packages = ["discretiser", "discretiser.rl", "discretiser.scenarios"]
+package-dir = {"discretiser" = "src", "discretiser.rl" = "src/rl", "discretiser.scenarios" = "src/scenarios"}
