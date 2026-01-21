@@ -123,6 +123,8 @@ discretiser/
 
 - `MinSurvival` is a general competing risks model (min of any survival distributions). More flexible than `CompoundWeibull`.
 
+- **ServiceEnv truncation at max_time**: `max_time` is a truncation trigger, NOT a reward clipping boundary. When the agent chooses a delay that would cross `max_time`, the step earns its full reward (for the complete delay), then truncates if survived. This ensures correct Bellman updates. The "penalise failure" reward formulation applies: service costs service_cost, failure costs failure_cost. Episode times can exceed max_time; it just indicates when to bootstrap.
+
 ## Dependencies
 
 - numpy

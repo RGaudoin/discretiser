@@ -20,7 +20,7 @@ DEFAULT_SCENARIO_PARAMS = dict(
 )
 
 # Default max episode time
-DEFAULT_MAX_TIME = 150.0
+DEFAULT_MAX_TIME = 500.0
 
 # Optimal policy parameters (from policy_optimisation notebook)
 # Best from multi-start: c=48.4, r=0.50 -> a=24.2, b=24.2

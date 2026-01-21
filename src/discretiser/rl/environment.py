@@ -39,14 +39,17 @@ class ServiceEnv(gym.Env):
         - 1 to N-1: delay in steps (default step=2, giving 0.1, 2, 4, ..., 100)
         - N: No more service (delay=inf)
 
-    Reward (training formulation - "reward survival"):
-        Step-wise: (revenue × time_elapsed - service_cost) / reward_scale
-        On failure: 0 (no penalty)
-        On truncation (max_time): +survival_bonus / reward_scale
+    Reward ("penalise failure" formulation):
+        On service: (revenue × delay - service_cost) / reward_scale
+        On failure: (revenue × t_fail - failure_cost) / reward_scale
+        On truncation: same as service, but truncated=True for bootstrapping
+
+    max_time is a truncation trigger, not a reward boundary. Steps that
+    cross max_time earn their full reward, then truncate. This ensures
+    correct Bellman updates.
 
     Rewards are scaled by reward_scale (default=failure_cost) to keep them
-    in a reasonable range (~[0, 2.5]) for more stable learning.
-    The original (unscaled) metric is tracked separately for comparison.
+    in a reasonable range for more stable learning.
     """
 
     @staticmethod
@@ -181,8 +184,10 @@ class ServiceEnv(gym.Env):
             self._subject.features['durability'] = self.fixed_durability
 
         # Create event registry, simulator, and state
+        # Note: Simulator has no max_time - we handle truncation in step()
+        # This allows proper Bellman updates for steps that cross max_time
         self._registry = self.scenario.create_event_registry()
-        self._simulator = Simulator(self._registry, max_time=self.max_time)
+        self._simulator = Simulator(self._registry)
         self._state = State(self._subject)
 
         # Reset tracking
@@ -231,12 +236,12 @@ class ServiceEnv(gym.Env):
         current_time = self._state.time
 
         # Schedule service (unless delay is inf)
+        # Note: Always schedule regardless of max_time - we handle truncation after
         if delay < float('inf'):
             scheduled_time = current_time + delay
-            if scheduled_time < self.max_time:
-                self._state.add_pending_event('service', scheduled_time, triggered_by='policy')
+            self._state.add_pending_event('service', scheduled_time, triggered_by='policy')
 
-        # Run simulation until next decision point (service, failure, or max_time)
+        # Run simulation until next decision point (service or failure)
         # Note: This "run until decision event" pattern is extensible to:
         # - Multiple decision event types (not just service)
         # - Multiple action types scheduling different events
@@ -255,12 +260,6 @@ class ServiceEnv(gym.Env):
             reward += self.revenue_per_time * time_elapsed
             prev_time = self._state.time
 
-            if step_result.truncated:
-                # Survived to max_time - add survival bonus (training reward)
-                reward += self.failure_cost  # survival_bonus = failure_cost
-                truncated = True
-                break
-
             if step_result.event_name == 'service':
                 # Service happened - subtract cost, update tracking
                 reward -= self.service_cost
@@ -269,23 +268,23 @@ class ServiceEnv(gym.Env):
                 self._total_service_time += interval
                 self._last_interval = interval  # Store BEFORE updating time
                 self._time_of_last_service = step_result.event_time
-                # Decision point - return to agent
+
+                # Check truncation: if service time > max_time, truncate
+                # This is the correct Bellman update - reward for full step, then truncate
+                if self._state.time > self.max_time:
+                    truncated = True
+                # else: decision point - return to agent
                 break
 
             elif step_result.terminated:
-                # Failure - no penalty in training reward (reward survival formulation)
-                # Original formulation would subtract failure_cost here
+                # Failure - subtract failure_cost ("penalise failure" formulation)
+                reward -= self.failure_cost
                 self._failed = True
                 terminated = True
                 break
 
-        # Compute original metric (unscaled, for comparison with baselines)
-        reward_original = reward
-        if terminated:  # Failed this step
-            reward_original -= self.failure_cost  # Add the failure penalty
-        if truncated:  # Survived to max_time
-            reward_original -= self.failure_cost  # Remove the survival bonus
-        self._cumulative_reward_original += reward_original
+        # Track original metric (same as training reward now - single formulation)
+        self._cumulative_reward_original += reward
 
         # Scale reward for training (keeps Q-values in reasonable range)
         reward_scaled = reward / self.reward_scale
