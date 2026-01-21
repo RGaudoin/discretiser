@@ -20,6 +20,7 @@ from .evaluation import (
     compare_with_baselines,
     print_evaluation_results,
     run_sanity_check,
+    format_stats,
 )
 
 # Scenario setup
@@ -48,6 +49,7 @@ __all__ = [
     'compare_with_baselines',
     'print_evaluation_results',
     'run_sanity_check',
+    'format_stats',
     # Scenarios
     'get_default_scenario',
     'get_baseline_policies',

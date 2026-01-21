@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Build artifacts
+*.egg-info/
+build/
+dist/
+
 # Environments
 .env
 .venv
@@ -24,3 +29,4 @@ CLAUDE.local.md
 models/
 logs/
 checkpoints/
+*.egg-info/
