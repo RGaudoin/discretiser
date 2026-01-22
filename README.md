@@ -30,6 +30,30 @@ The gap between policy-on-learned-model and policy-on-ground-truth measures how 
 
 **Architecture**: This repo provides simulation, synthetic data generation, and policy evaluation (including basic RL). Generative model training (learning surrogate models from data) happens externally - implementations may come from various sources (proprietary, open-source, academic).
 
+## Public/Private Repository Split
+
+This repo is designed to be **public**. Surrogate models and advanced algorithms live in `discretiser-surrogate` (private).
+
+**Why the split?** This public repo provides the **framework**: synthetic data generation with known ground-truth dynamics. For **real-world applications**, we don't have a true data generator — only historical observations. The private repo learns surrogate models from data that mimic the true (unknown) generator.
+
+```
+discretiser (public)                    discretiser-surrogate (private)
+─────────────────────                   ───────────────────────────────
+• Simulation framework                  • Surrogate models from data
+• Synthetic data generation             • Advanced RL (expected-value, etc.)
+• RL environment (ServiceEnv)           • Surrogate environments
+• Demo notebooks (outputs committed)    • Enables real-world optimisation
+```
+
+**Validation workflow:**
+1. Generate synthetic data here with known ground-truth dynamics
+2. Fit surrogate model to the synthetic data (discretiser-surrogate)
+3. Optimise policy on the surrogate
+4. Compare against policy optimised on ground-truth
+5. If results match → surrogate approach is valid for real data
+
+**Demo notebooks:** Some notebooks import from `discretiser-surrogate` with outputs committed. They demonstrate what's achievable but running them requires the private package.
+
 ## Installation
 
 ```bash
