@@ -42,6 +42,20 @@ class SurvivalModel(ABC):
         s_t_eps = self.survival(t + eps)
         return -(s_t_eps - s_t) / (eps * s_t)
 
+    def log_pdf(self, t: float) -> float:
+        """Log probability density: log f(t) = log h(t) + log S(t).
+
+        Default implementation uses hazard() and survival(). Subclasses
+        with closed-form expressions should override for numerical stability.
+        """
+        s_t = self.survival(t)
+        if s_t <= 0:
+            return float('-inf')
+        h_t = self.hazard(t)
+        if h_t <= 0:
+            return float('-inf')
+        return np.log(h_t) + np.log(s_t)
+
     def inverse_survival(self, u: float, sampling_method: str = 'auto') -> float:
         """
         Inverse survival function: find t such that S(t) = u.
@@ -243,6 +257,13 @@ class Weibull(SurvivalModel):
         if t <= 0:
             return 0.0 if self.shape > 1 else float('inf') if self.shape < 1 else 1.0 / self.scale
         return (self.shape / self.scale) * ((t / self.scale) ** (self.shape - 1))
+
+    def log_pdf(self, t: float) -> float:
+        """Closed-form: log(k) - k*log(λ) + (k-1)*log(t) - (t/λ)^k."""
+        if t <= 0:
+            return float('-inf')
+        k, lam = self.shape, self.scale
+        return np.log(k) - k * np.log(lam) + (k - 1) * np.log(t) - (t / lam) ** k
 
     def inverse_survival(self, u: float, sampling_method: str = 'auto') -> float:
         """Closed-form inverse: t = λ * (-ln(u))^(1/k)"""

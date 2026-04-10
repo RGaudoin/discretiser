@@ -14,6 +14,25 @@ from .base import (
     summarise_cohort_costs,
 )
 
+from .degradation import (
+    # Scenario class
+    DegradationScenario,
+    # Survival model
+    DegradationDependentFailure,
+    # Subject generation
+    generate_degradation_subjects,
+    # Events
+    create_degradation_events,
+    # Baseline policy
+    baseline_degradation_service_interval,
+    DegradationBaselineState,
+    make_degradation_state_factory,
+    # Cost structure
+    DegradationCosts,
+    # Data generation
+    generate_degradation_data,
+)
+
 from .basic_bathtub import (
     # Scenario class
     BasicBathtubScenario,
@@ -38,6 +57,16 @@ __all__ = [
     'Scenario',
     'CostStructure',
     'summarise_cohort_costs',
+    # Degradation
+    'DegradationScenario',
+    'DegradationDependentFailure',
+    'generate_degradation_subjects',
+    'create_degradation_events',
+    'baseline_degradation_service_interval',
+    'DegradationBaselineState',
+    'make_degradation_state_factory',
+    'DegradationCosts',
+    'generate_degradation_data',
     # Basic Bathtub
     'BasicBathtubScenario',
     'EffectiveAgeBathtub',
